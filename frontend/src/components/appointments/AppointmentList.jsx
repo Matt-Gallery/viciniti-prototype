@@ -45,8 +45,32 @@ const AppointmentList = () => {
             const response = await appointments.getAll();
             console.log('Fetched appointments');
             
+            // Get current user from localStorage
+            const userStr = localStorage.getItem('user');
+            let currentUserId = null;
+            if (userStr) {
+                try {
+                    const userData = JSON.parse(userStr);
+                    currentUserId = userData.id;
+                } catch (e) {
+                    console.error('Error parsing user data');
+                }
+            }
+            
+            // Filter appointments based on user type and current user
+            let filteredAppointments = response.data;
+            if (userType === 'consumer') {
+                filteredAppointments = response.data.filter(appointment => 
+                    appointment.consumer.id === currentUserId
+                );
+            } else if (userType === 'provider') {
+                filteredAppointments = response.data.filter(appointment => 
+                    appointment.service.provider.user.id === currentUserId
+                );
+            }
+            
             // Sort appointments by date (most recent first)
-            const sortedAppointments = response.data.sort((a, b) => {
+            const sortedAppointments = filteredAppointments.sort((a, b) => {
                 return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
             });
             
@@ -152,7 +176,7 @@ const AppointmentList = () => {
                                 <CardHeader
                                     title={appointment.service.name}
                                     subheader={userType === 'provider' 
-                                        ? `Customer: ${appointment.consumer.username || appointment.consumer.email}`
+                                        ? `Customer: ${appointment.consumer.username || appointment.consumer.email || "Anonymous"}`
                                         : `Provider: ${appointment.service.provider.business_name}`
                                     }
                                     action={<Chip 
