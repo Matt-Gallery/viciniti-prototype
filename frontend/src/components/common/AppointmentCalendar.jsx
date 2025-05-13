@@ -63,8 +63,21 @@ const AppointmentCalendar = forwardRef(({ mode,
     const [providerAppointments, setProviderAppointments] = useState([]);
     
     // Expose methods to parent component via ref
-    useImperativeHandle(ref, () => ({ fetchUserAppointments: async () => async () => { await fetchUserAppointments();
-         }
+    useImperativeHandle(ref, () => ({
+        fetchUserAppointments: async () => {
+            console.log('Refreshing appointments and availability');
+            // Refresh user appointments first
+            const appointments = await fetchUserAppointments();
+            console.log('Appointments refreshed:', appointments);
+            
+            // Also refresh service availability if in consumer mode
+            if (mode === 'consumer' && serviceId) {
+                console.log('Refreshing service availability for service:', serviceId);
+                await fetchServiceAvailability(serviceId);
+            }
+            
+            return appointments;
+        }
     }));
     
     // Generate days array (today + next N days)
