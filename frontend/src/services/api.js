@@ -30,8 +30,28 @@ export const auth = {
         return response;
     },
     
-    register: (userData) =>
-        api.post('/auth/register/', userData),
+    register: async (userData) => {
+        console.log('Register API called with data:', userData);
+        console.log('Register API URL:', `${API_URL}/auth/register/`);
+        
+        try {
+            const response = await api.post('/auth/register/', userData);
+            console.log('Register API response:', response);
+            return response;
+        } catch (error) {
+            console.error('Register API error:', error);
+            if (error.response) {
+                console.error('Error response:', error.response.data);
+                console.error('Status code:', error.response.status);
+                console.error('Headers:', error.response.headers);
+            } else if (error.request) {
+                console.error('No response received, request:', error.request);
+            } else {
+                console.error('Error message:', error.message);
+            }
+            throw error;
+        }
+    },
     
     logout: () => {
         localStorage.removeItem('token');

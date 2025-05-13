@@ -44,8 +44,13 @@ const Register = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        console.log('Registration form submitted with data:', formData);
+        setError(''); // Clear previous errors
+        
         try {
+            console.log('Sending registration request with data:', JSON.stringify(formData));
             const response = await auth.register(formData);
+            console.log('Registration successful, response:', response.data);
             localStorage.setItem('token', response.data.token);
             localStorage.setItem('user', JSON.stringify(response.data.user));
             
@@ -55,23 +60,29 @@ const Register = () => {
                 navigate('/services');
             }
         } catch (err) {
-            console.error('Registration error');
+            console.error('Registration error:', err);
+            
             // Handle different types of errors
             if (err.response) {
                 // The request was made and the server responded with a status code
                 // that falls out of the range of 2xx
                 const errorData = err.response.data;
+                console.error('Error response data:', errorData);
+                console.error('Status code:', err.response.status);
+                
                 if (errorData.error) {
-                    setError(errorData.error);
+                    setError(`Error: ${errorData.error}`);
                 } else {
-                    setError('Registration failed. Please check your information and try again.');
+                    setError(`Registration failed (${err.response.status}). Please check your information and try again.`);
                 }
             } else if (err.request) {
                 // The request was made but no response was received
-                setError('No response from server. Please check your network connection.');
+                console.error('No response received from server');
+                setError('No response from server. Please check your network connection. Verify that your backend is running at http://localhost:8000.');
             } else {
                 // Something happened in setting up the request that triggered an Error
-                setError('Error setting up request. Please try again later.');
+                console.error('Error setting up request:', err.message);
+                setError(`Error setting up request: ${err.message}`);
             }
         }
     };

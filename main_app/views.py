@@ -23,10 +23,15 @@ class Home(APIView):
 
 # API Views
 class RegisterAPI(APIView):
-    permission_classes = [AllowAny]  # Allow any user to register
+    permission_classes = [AllowAny]  # Allow any user to register - ensure this is directly on the class
+    authentication_classes = []  # No authentication needed for registration
     
     def post(self, request):
         try:
+            # Debug logging
+            print("DEBUG RegisterAPI: Registration attempt")
+            print(f"DEBUG RegisterAPI: Request data: {request.data}")
+            
             # Extract data from request
             username = request.data.get('username')
             email = request.data.get('email')
@@ -35,25 +40,36 @@ class RegisterAPI(APIView):
             phone_number = request.data.get('phone_number', '')
             address = request.data.get('address', '')
             
+            print(f"DEBUG RegisterAPI: username={username}, email={email}, password_length={len(password) if password else 0}, user_type={user_type}")
+            
             # Validate required fields
             if not all([username, email, password, user_type]):
+                missing = []
+                if not username: missing.append('username')
+                if not email: missing.append('email')
+                if not password: missing.append('password')
+                if not user_type: missing.append('user_type')
+                print(f"DEBUG RegisterAPI: Missing required fields: {missing}")
                 return Response({
-                    'error': 'Required fields missing'
+                    'error': f'Required fields missing: {", ".join(missing)}'
                 }, http_status.HTTP_400_BAD_REQUEST)
             
             # Validate user type
             if user_type not in ['provider', 'consumer']:
+                print(f"DEBUG RegisterAPI: Invalid user type: {user_type}")
                 return Response({
                     'error': 'Invalid user type'
                 }, http_status.HTTP_400_BAD_REQUEST)
             
             # Check if username or email already exists
             if User.objects.filter(username=username).exists():
+                print(f"DEBUG RegisterAPI: Username already exists: {username}")
                 return Response({
                     'error': 'Username already exists'
                 }, http_status.HTTP_400_BAD_REQUEST)
                 
             if User.objects.filter(email=email).exists():
+                print(f"DEBUG RegisterAPI: Email already exists: {email}")
                 return Response({
                     'error': 'Email already exists'
                 }, http_status.HTTP_400_BAD_REQUEST)
@@ -62,11 +78,13 @@ class RegisterAPI(APIView):
             try:
                 validate_password(password)
             except ValidationError as e:
+                print(f"DEBUG RegisterAPI: Password validation failed: {str(e)}")
                 return Response({
                     'error': str(e)
                 }, http_status.HTTP_400_BAD_REQUEST)
             
             # Create user
+            print("DEBUG RegisterAPI: Creating user")
             user = User.objects.create_user(
                 username=username,
                 email=email,
@@ -78,6 +96,7 @@ class RegisterAPI(APIView):
             
             # Create token
             token, _ = Token.objects.get_or_create(user=user)
+            print(f"DEBUG RegisterAPI: User created successfully. Token: {token.key}")
             
             return Response({
                 'token': token.key,
@@ -90,12 +109,16 @@ class RegisterAPI(APIView):
             }, http_status.HTTP_201_CREATED)
             
         except Exception as e:
+            print(f"DEBUG RegisterAPI: Exception occurred: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class LoginAPI(APIView):
     permission_classes = [AllowAny]  # Allow any user to login
+    authentication_classes = []  # No authentication needed for login
     
     def post(self, request):
         username = request.data.get('username')

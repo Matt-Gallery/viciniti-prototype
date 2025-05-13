@@ -6,8 +6,8 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    # TODO: Rename the 'orderearly' directory to 'viciniti' to match this setting
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'orderearly.settings')
+    # Using viciniti as the settings module
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'viciniti.settings')
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

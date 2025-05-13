@@ -1,5 +1,5 @@
 """
-WSGI config for orderearly project.
+WSGI config for viciniti project.
 
 It exposes the WSGI callable as a module-level variable named ``application``.
 
@@ -11,6 +11,6 @@ import os
 
 from django.core.wsgi import get_wsgi_application
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'orderearly.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'viciniti.settings')
 
 application = get_wsgi_application()
