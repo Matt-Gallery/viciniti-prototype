@@ -112,8 +112,25 @@ export const appointments = {
     getById: (id) =>
         api.get(`/appointments/${id}/`),
     
-    create: (appointmentData) =>
-        api.post('/appointments/', appointmentData),
+    create: async (appointmentData) => {
+        console.log('Creating appointment with data:', appointmentData);
+        try {
+            const response = await api.post('/appointments/', appointmentData);
+            console.log('Appointment created successfully:', response.data);
+            return response;
+        } catch (error) {
+            console.error('Error creating appointment:', error);
+            if (error.response) {
+                console.error('Error response data:', error.response.data);
+                console.error('Status code:', error.response.status);
+            } else if (error.request) {
+                console.error('No response received, request:', error.request);
+            } else {
+                console.error('Error message:', error.message);
+            }
+            throw error;
+        }
+    },
     
     update: (id, appointmentData) =>
         api.put(`/appointments/${id}/`, appointmentData),

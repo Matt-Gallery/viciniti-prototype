@@ -112,27 +112,28 @@ const ConsumerAppointmentCalendar = ({
             setBookingError('');
             
             console.log('Creating appointment with slot');
+            console.log('Email being submitted:', bookingData.email);
             
             // Add the buffer time to the end time
             const appointmentEndTime = new Date(selectedSlot.end);
             
             // Create appointment request
             const appointmentData = {
-                service,
+                service: parseInt(serviceId), // Make sure it's a number
                 start_time: selectedSlot.start.toISOString(),
                 end_time: appointmentEndTime.toISOString(),
-                status: 'confirmed', // Changed from 'pending' to 'confirmed'
+                status: 'confirmed',
                 notes: bookingData.notes || '',
-                client_email: bookingData.email,
+                client_email: bookingData.email, // This must be sent
                 client_phone: bookingData.phone || '',
                 client_address: bookingData.address || ''
             };
             
-            console.log('Sending appointment data');
+            console.log('Sending appointment data', JSON.stringify(appointmentData));
             
             // Call API to create appointment
             const response = await appointments.create(appointmentData);
-            console.log('Appointment created successfully');
+            console.log('Appointment created successfully', response.data);
             
             setBookingSuccess(true);
             setBookingInProgress(false);
