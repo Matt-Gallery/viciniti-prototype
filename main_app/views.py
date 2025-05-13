@@ -7,7 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.urls import reverse_lazy
-from .models import User, Service, ServiceProvider, Appointment, ProviderAvailability
+from .models import User, Service, ServiceProvider, Appointment, ProviderAvailability, ProximityDiscountTier, ProximityDiscount
 from .forms import UserRegistrationForm, ServiceProviderForm, ServiceForm, AppointmentForm
 from rest_framework.authtoken.models import Token
 from django.contrib.auth.password_validation import validate_password
@@ -15,9 +15,14 @@ from django.core.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.utils import timezone
 import datetime
+import uuid
 
 # For parsing ISO format datetimes
 from dateutil.parser import parse as parse_datetime
+from django.contrib.gis.geos import Point
+from django.contrib.gis.measure import D
+from django.contrib.gis.db.models.functions import Distance
+from decimal import Decimal
 
 # Define the home view
 class Home(APIView):
@@ -185,10 +190,16 @@ class LoginAPI(APIView):
                 }, http_status.HTTP_401_UNAUTHORIZED)
 
 class ServiceCategoriesAPI(APIView):
-    permission_classes = [AllowAny]  # Allow any user to view categories
+    # Removed AllowAny permission to require authentication
     
     def get(self, request):
         """Return all service categories"""
+        # Check if user is authenticated
+        if not request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required'
+            }, http_status.HTTP_401_UNAUTHORIZED)
+            
         from .models import SERVICE_CATEGORIES
         categories = [{'value': category[0], 'label': category[1]} for category in SERVICE_CATEGORIES]
         return Response(categories)
@@ -322,11 +333,17 @@ class ServiceCreateAPI(APIView):
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ServiceListAPI(APIView):
-    permission_classes = [AllowAny]  # Allow any user to view services
+    # Removed AllowAny permission to require authentication
     
     def get(self, request):
         """Get all services"""
         try:
+            # Check if user is authenticated
+            if not request.user.is_authenticated:
+                return Response({
+                    'error': 'Authentication required'
+                }, http_status.HTTP_401_UNAUTHORIZED)
+                
             from .models import Service
             services = Service.objects.filter(is_active=True)
             
@@ -354,11 +371,17 @@ class ServiceListAPI(APIView):
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ServiceDetailAPI(APIView):
-    permission_classes = [AllowAny]  # Allow any user to view service details
+    # Removed AllowAny permission to require authentication
     
     def get(self, request, service_id):
         """Get service by ID"""
         try:
+            # Check if user is authenticated
+            if not request.user.is_authenticated:
+                return Response({
+                    'error': 'Authentication required'
+                }, http_status.HTTP_401_UNAUTHORIZED)
+                
             from .models import Service
             try:
                 service = Service.objects.get(id=service_id)
@@ -727,22 +750,222 @@ class ProviderAvailabilityAPI(APIView):
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class ServiceAvailabilityAPI(APIView):
-    permission_classes = [AllowAny]  # Allow anyone to view availability
-
-    def get(self, request, service_id):
-        """Get availability for a specific service with accurate conflict detection"""
+class ProximityDiscountTierAPI(APIView):
+    """API for managing proximity discount tiers"""
+    
+    def get(self, request):
+        """Get all discount tiers for the provider"""
         try:
+            # Check if user is authenticated and is a provider
+            if not request.user.is_authenticated or request.user.user_type != 'provider':
+                return Response({
+                    'error': 'Provider authentication required'
+                }, http_status.HTTP_401_UNAUTHORIZED)
+                
+            # Get provider profile
+            try:
+                provider = request.user.provider_profile
+            except:
+                return Response({
+                    'error': 'Provider profile not found'
+                }, http_status.HTTP_404_NOT_FOUND)
+            
+            # Get discount tiers
+            from .models import ProximityDiscountTier
+            tiers = ProximityDiscountTier.objects.filter(provider=provider).order_by('tier')
+            
+            # Prepare response data
+            tiers_data = []
+            for tier in tiers:
+                # Get discounts for this tier
+                discounts = {}
+                for discount in tier.discounts.all():
+                    discounts[discount.appointment_count] = float(discount.discount_percentage)
+                
+                tiers_data.append({
+                    'id': tier.id,
+                    'tier': tier.tier,
+                    'min_distance': tier.min_distance,
+                    'max_distance': tier.max_distance,
+                    'distance_unit': tier.distance_unit,
+                    'discounts': discounts
+                })
+            
+            return Response(tiers_data)
+        except Exception as e:
+            print(f"Error in ProximityDiscountTierAPI.get: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def post(self, request):
+        """Create or update a discount tier and its discounts"""
+        try:
+            # Check if user is authenticated and is a provider
+            if not request.user.is_authenticated or request.user.user_type != 'provider':
+                return Response({
+                    'error': 'Provider authentication required'
+                }, http_status.HTTP_401_UNAUTHORIZED)
+                
+            # Get provider profile
+            try:
+                provider = request.user.provider_profile
+            except:
+                return Response({
+                    'error': 'Provider profile not found'
+                }, http_status.HTTP_404_NOT_FOUND)
+            
+            # Extract data
+            tier_number = request.data.get('tier')
+            min_distance = request.data.get('min_distance')
+            max_distance = request.data.get('max_distance')
+            distance_unit = request.data.get('distance_unit', 'yards')
+            discounts = request.data.get('discounts', {})
+            
+            # Validate required fields
+            if tier_number is None or min_distance is None or max_distance is None:
+                return Response({
+                    'error': 'tier, min_distance, and max_distance are required'
+                }, http_status.HTTP_400_BAD_REQUEST)
+            
+            # Validate tier number
+            if tier_number not in [1, 2, 3, 4]:
+                return Response({
+                    'error': 'tier must be 1, 2, 3, or 4'
+                }, http_status.HTTP_400_BAD_REQUEST)
+            
+            # Validate min and max distance
+            try:
+                min_distance = float(min_distance)
+                max_distance = float(max_distance)
+                
+                if min_distance < 0:
+                    return Response({
+                        'error': 'min_distance must be non-negative'
+                    }, http_status.HTTP_400_BAD_REQUEST)
+                
+                if max_distance <= min_distance:
+                    return Response({
+                        'error': 'max_distance must be greater than min_distance'
+                    }, http_status.HTTP_400_BAD_REQUEST)
+            except (ValueError, TypeError):
+                return Response({
+                    'error': 'min_distance and max_distance must be valid numbers'
+                }, http_status.HTTP_400_BAD_REQUEST)
+            
+            # Validate distance unit
+            if distance_unit not in ['yards', 'miles']:
+                return Response({
+                    'error': 'distance_unit must be "yards" or "miles"'
+                }, http_status.HTTP_400_BAD_REQUEST)
+            
+            # Create or update the tier
+            from .models import ProximityDiscountTier, ProximityDiscount
+            tier, created = ProximityDiscountTier.objects.update_or_create(
+                provider=provider,
+                tier=tier_number,
+                defaults={
+                    'min_distance': min_distance,
+                    'max_distance': max_distance,
+                    'distance_unit': distance_unit
+                }
+            )
+            
+            # Process discounts
+            discount_data = []
+            for appt_count_str, discount_percentage_str in discounts.items():
+                try:
+                    appt_count = int(appt_count_str)
+                    discount_percentage = float(discount_percentage_str)
+                    
+                    # Validate appointment count
+                    if appt_count < 1 or appt_count > 5:
+                        return Response({
+                            'error': f'Invalid appointment count: {appt_count}. Must be between 1 and 5.'
+                        }, http_status.HTTP_400_BAD_REQUEST)
+                    
+                    # Validate discount percentage
+                    if discount_percentage < 0 or discount_percentage > 100:
+                        return Response({
+                            'error': f'Invalid discount percentage: {discount_percentage}. Must be between 0 and 100.'
+                        }, http_status.HTTP_400_BAD_REQUEST)
+                    
+                    # Create or update the discount
+                    discount, discount_created = ProximityDiscount.objects.update_or_create(
+                        tier=tier,
+                        appointment_count=appt_count,
+                        defaults={
+                            'discount_percentage': discount_percentage
+                        }
+                    )
+                    
+                    discount_data.append({
+                        'appointment_count': appt_count,
+                        'discount_percentage': discount_percentage
+                    })
+                except (ValueError, TypeError):
+                    return Response({
+                        'error': f'Invalid discount data: {appt_count_str}={discount_percentage_str}'
+                    }, http_status.HTTP_400_BAD_REQUEST)
+            
+            return Response({
+                'id': tier.id,
+                'tier': tier.tier,
+                'min_distance': tier.min_distance,
+                'max_distance': tier.max_distance,
+                'distance_unit': tier.distance_unit,
+                'discounts': discounts
+            }, http_status.HTTP_201_CREATED if created else http_status.HTTP_200_OK)
+        except Exception as e:
+            print(f"Error in ProximityDiscountTierAPI.post: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ServiceAvailabilityAPI(APIView):
+    # Removed AllowAny permission to require authentication
+    
+    def get(self, request, service_id):
+        """Get availability for a specific service with accurate conflict detection and dynamic pricing"""
+        try:
+            # Check if user is authenticated
+            if not request.user.is_authenticated:
+                return Response({
+                    'error': 'Authentication required'
+                }, http_status.HTTP_401_UNAUTHORIZED)
+                
             # Add debug logging
             print(f"DEBUG AVAILABILITY: Calculating availability for service {service_id}")
             
-            from .models import Service, ProviderAvailability, Appointment
+            from .models import Service, ProviderAvailability, Appointment, ProximityDiscountTier, ProximityDiscount
+            from django.contrib.gis.geos import Point
+            from django.contrib.gis.db.models.functions import Distance
+            
             # Check if service exists
             service = Service.objects.get(id=service_id)
             
             # Get provider associated with this service
             provider = service.provider
             print(f"DEBUG AVAILABILITY: Found provider: {provider.business_name}")
+            
+            # Get consumer location if provided
+            consumer_lat = request.GET.get('latitude')
+            consumer_lng = request.GET.get('longitude')
+            consumer_location = None
+            
+            if consumer_lat and consumer_lng:
+                try:
+                    consumer_lat = float(consumer_lat)
+                    consumer_lng = float(consumer_lng)
+                    consumer_location = Point(consumer_lng, consumer_lat, srid=4326)
+                    print(f"DEBUG AVAILABILITY: Consumer location provided: {consumer_lat}, {consumer_lng}")
+                except (ValueError, TypeError):
+                    print(f"DEBUG AVAILABILITY: Invalid location coordinates: {consumer_lat}, {consumer_lng}")
+                    consumer_location = None
             
             # Get existing appointments for this provider (not just this service)
             # This ensures we account for all provider commitments
@@ -751,9 +974,20 @@ class ServiceAvailabilityAPI(APIView):
                 status__in=['pending', 'confirmed', 'completed']  # Only active appointments
             )
             
+            # If consumer location is provided, annotate appointments with distance
+            if consumer_location:
+                existing_appointments = existing_appointments.filter(
+                    location__isnull=False
+                ).annotate(
+                    distance=Distance('location', consumer_location)
+                )
+            
             print(f"DEBUG AVAILABILITY: Found {existing_appointments.count()} existing appointments")
             for appt in existing_appointments:
-                print(f"DEBUG AVAILABILITY: Existing appointment: {appt.service.name} - {appt.start_time} to {appt.end_time}")
+                if hasattr(appt, 'distance'):
+                    print(f"DEBUG AVAILABILITY: Existing appointment: {appt.service.name} - {appt.start_time} to {appt.end_time} - Distance: {appt.distance.m} meters")
+                else:
+                    print(f"DEBUG AVAILABILITY: Existing appointment: {appt.service.name} - {appt.start_time} to {appt.end_time}")
             
             # Buffer time in minutes to add to both sides of appointments
             buffer_minutes = 15
@@ -775,6 +1009,11 @@ class ServiceAvailabilityAPI(APIView):
             # Get provider's availabilities
             availabilities = ProviderAvailability.objects.filter(provider=provider)
             print(f"DEBUG AVAILABILITY: Found {availabilities.count()} availability blocks")
+            
+            # Get provider's discount tiers
+            discount_tiers = ProximityDiscountTier.objects.filter(provider=provider).order_by('tier')
+            has_discount_config = discount_tiers.exists()
+            print(f"DEBUG AVAILABILITY: Provider has discount configuration: {has_discount_config}")
             
             # Organize availability by day
             availability_data = {}
@@ -813,7 +1052,11 @@ class ServiceAvailabilityAPI(APIView):
                         'id': f"slot-{day_key}-{slot_index}",
                         'start': current_start,
                         'end': current_end,
-                        'duration': duration_minutes
+                        'duration': duration_minutes,
+                        'original_price': float(service.price),
+                        'final_price': float(service.price),
+                        'discount_percentage': 0,
+                        'nearby_appointments': 0
                     }
                     
                     # Check if slot overlaps with ANY buffered appointment block
@@ -835,20 +1078,95 @@ class ServiceAvailabilityAPI(APIView):
                             break
                     
                     if is_available:
+                        # If consumer location is provided and provider has discount configuration,
+                        # calculate discounted price based on proximity to existing appointments
+                        if consumer_location and has_discount_config:
+                            # Create a slot location based on consumer location (for simplified calculation)
+                            slot_location = consumer_location
+                            slot_date = current_start.date()
+                            
+                            # Find appointments on the same day
+                            same_day_appointments = existing_appointments.filter(
+                                start_time__date=slot_date
+                            )
+                            
+                            if same_day_appointments.exists():
+                                # Count nearby appointments within different distance tiers
+                                nearby_appointments_by_tier = {}
+                                for tier in discount_tiers:
+                                    # Convert tier distances to meters for comparison
+                                    min_meters = tier.min_distance * 0.9144 if tier.distance_unit == 'yards' else tier.min_distance * 1609.34
+                                    max_meters = tier.max_distance * 0.9144 if tier.distance_unit == 'yards' else tier.max_distance * 1609.34
+                                    
+                                    # Count appointments within this tier's distance range
+                                    appointments_in_range = 0
+                                    for appt in same_day_appointments:
+                                        if hasattr(appt, 'distance'):
+                                            distance_meters = appt.distance.m
+                                            if min_meters <= distance_meters < max_meters:
+                                                appointments_in_range += 1
+                                                print(f"DEBUG AVAILABILITY: Appointment {appt.id} is in Tier {tier.tier} range ({min_meters}-{max_meters}m), actual distance: {distance_meters}m")
+                                    
+                                    if appointments_in_range > 0:
+                                        nearby_appointments_by_tier[tier.tier] = appointments_in_range
+                                
+                                # Determine the highest discount
+                                best_discount_percent = 0
+                                best_discount_tier = None
+                                best_discount_appt_count = 0
+                                
+                                for tier_num, appt_count in nearby_appointments_by_tier.items():
+                                    # Limit to 5 appointments for discount calculation
+                                    effective_count = min(appt_count, 5)
+                                    
+                                    # Get the discount for this tier and appointment count
+                                    try:
+                                        tier = discount_tiers.get(tier=tier_num)
+                                        discount = ProximityDiscount.objects.get(
+                                            tier=tier,
+                                            appointment_count=effective_count
+                                        )
+                                        
+                                        discount_percent = float(discount.discount_percentage)
+                                        if discount_percent > best_discount_percent:
+                                            best_discount_percent = discount_percent
+                                            best_discount_tier = tier_num
+                                            best_discount_appt_count = effective_count
+                                            print(f"DEBUG AVAILABILITY: Found better discount: {best_discount_percent}% for Tier {best_discount_tier} with {best_discount_appt_count} appointments")
+                                    except (ProximityDiscountTier.DoesNotExist, ProximityDiscount.DoesNotExist):
+                                        pass
+                                
+                                # Apply the best discount if found
+                                if best_discount_percent > 0:
+                                    original_price = float(service.price)
+                                    discount_amount = original_price * (best_discount_percent / 100)
+                                    final_price = original_price - discount_amount
+                                    
+                                    slot['discount_percentage'] = best_discount_percent
+                                    slot['final_price'] = round(final_price, 2)
+                                    slot['nearby_appointments'] = best_discount_appt_count
+                                    
+                                    print(f"DEBUG AVAILABILITY: Applied {best_discount_percent}% discount to slot {slot['id']}")
+                                    print(f"DEBUG AVAILABILITY: Original price: ${original_price}, Final price: ${slot['final_price']}")
+                        
                         available_slots.append(slot)
-                        print(f"DEBUG AVAILABILITY: Added available slot: {slot['id']} at {slot['start']}")
+                        print(f"DEBUG AVAILABILITY: Added available slot: {slot['id']} at {slot['start']}, price: ${slot['final_price']}")
                     
                     # Move to the next potential slot - add duration PLUS buffer time for spacing between slots
                     # This ensures each appointment has buffer time on both sides
                     slot_index += 1
                     current_start = current_start + timezone.timedelta(minutes=duration_minutes + buffer_minutes)
-                
+                    
                 # Add valid slots to the output
                 for slot in available_slots:
                     availability_data[day_key].append({
                         'id': slot['id'],
                         'start': slot['start'].isoformat(),
-                        'end': slot['end'].isoformat()
+                        'end': slot['end'].isoformat(),
+                        'original_price': slot['original_price'],
+                        'final_price': slot['final_price'],
+                        'discount_percentage': slot['discount_percentage'],
+                        'nearby_appointments': slot['nearby_appointments']
                     })
             
             return Response(availability_data)
@@ -870,51 +1188,60 @@ class AppointmentListAPI(APIView):
     
     def get(self, request):
         """Get all appointments for the authenticated user or provider"""
-        # Get appointments based on user type
-        if request.user.is_authenticated and request.user.user_type == 'provider':
-            # Providers see appointments for their services
-            appointments = Appointment.objects.filter(
-                service__provider__user=request.user
-            ).order_by('start_time')
-        elif request.user.is_authenticated:
-            # Consumers see their own appointments
-            appointments = Appointment.objects.filter(
-                consumer=request.user
-            ).order_by('start_time')
-        else:
-            # For testing/debugging, return all appointments for unauthenticated users
-            print("WARNING: Returning all appointments for unauthenticated request")
-            appointments = Appointment.objects.all().order_by('start_time')
+        try:
+            # Get appointments based on user type
+            if request.user.is_authenticated and request.user.user_type == 'provider':
+                # Providers see appointments for their services
+                            appointments = Appointment.objects.filter(
+                    service__provider__user=request.user
+                ).order_by('start_time')
+            elif request.user.is_authenticated:
+                # Consumers see their own appointments
+                appointments = Appointment.objects.filter(
+                    consumer=request.user
+                ).order_by('start_time')
+            else:
+                # For testing/debugging, return all appointments for unauthenticated users
+                print("WARNING: Returning all appointments for unauthenticated request")
+                appointments = Appointment.objects.all().order_by('start_time')
         
-        # Serialize appointments
-        appointment_list = []
-        for appointment in appointments:
-            appointment_list.append({
-                'id': appointment.id,
-                'service': {
-                    'id': appointment.service.id,
-                    'name': appointment.service.name,
-                    'duration': appointment.service.duration,
-                    'price': float(appointment.service.price),
-                    'provider': {
-                        'id': appointment.service.provider.id,
-                        'business_name': appointment.service.provider.business_name
-                    }
-                },
-                'consumer': {
-                    'id': appointment.consumer.id,
-                    'username': appointment.consumer.username,
-                    'email': appointment.consumer.email
-                },
-                'start_time': appointment.start_time.isoformat(),
-                'end_time': appointment.end_time.isoformat(),
-                'status': appointment.status,
-                'notes': appointment.notes,
-                'created_at': appointment.created_at.isoformat(),
-                'updated_at': appointment.updated_at.isoformat()
-            })
-        
-        return Response(appointment_list)
+            # Serialize appointments
+            appointment_list = []
+            for appointment in appointments:
+                appointment_data = {
+                    'id': str(appointment.id),  # Ensure UUID is converted to string
+                    'service': {
+                        'id': appointment.service.id,
+                        'name': appointment.service.name,
+                        'duration': appointment.service.duration,
+                        'price': float(appointment.service.price),
+                        'provider': {
+                            'id': appointment.service.provider.id,
+                            'business_name': appointment.service.provider.business_name
+                        }
+                    },
+                    'consumer': {
+                        'id': appointment.consumer.id,
+                        'username': appointment.consumer.username,
+                        'email': appointment.consumer.email
+                    },
+                    'start_time': appointment.start_time.isoformat(),
+                    'end_time': appointment.end_time.isoformat(),
+                    'status': appointment.status,
+                    'notes': appointment.notes,
+                    'created_at': appointment.created_at.isoformat(),
+                    'updated_at': appointment.updated_at.isoformat()
+                }
+                appointment_list.append(appointment_data)
+            
+            return Response(appointment_list)
+        except Exception as e:
+            import traceback
+            print(f"Error fetching appointments: {str(e)}")
+            traceback.print_exc()
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def post(self, request):
         """Create a new appointment - for testing, we'll allow anonymous appointments"""
@@ -1085,11 +1412,20 @@ class AppointmentDetailAPI(APIView):
     def get(self, request, appointment_id):
         """Get appointment by ID"""
         try:
+            # Convert string UUID to proper UUID object if needed
+            try:
+                if not isinstance(appointment_id, uuid.UUID):
+                    appointment_id = uuid.UUID(appointment_id)
+            except (ValueError, AttributeError) as e:
+                return Response({
+                    'error': f'Invalid UUID format: {str(e)}'
+                }, http_status.HTTP_400_BAD_REQUEST)
+        
             # Get appointment directly without permission check for testing
             appointment = Appointment.objects.get(id=appointment_id)
             
             return Response({
-                'id': appointment.id,
+                'id': str(appointment.id),  # Convert UUID to string for JSON
                 'service': {
                     'id': appointment.service.id,
                     'name': appointment.service.name,
@@ -1117,6 +1453,9 @@ class AppointmentDetailAPI(APIView):
                 'error': 'Appointment not found'
             }, http_status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            import traceback
+            print(f"Error retrieving appointment: {str(e)}")
+            traceback.print_exc()
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)

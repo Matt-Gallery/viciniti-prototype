@@ -13,6 +13,7 @@ import ServiceCreate from './components/provider/ServiceCreate';
 import ServiceEdit from './components/provider/ServiceEdit';
 import ProviderSetup from './components/provider/ProviderSetup';
 import ProviderProfile from './components/provider/ProviderProfile';
+import ProviderAvailabilityCalendar from './components/provider/ProviderAvailabilityCalendar';
 import AppointmentBooking from './components/appointments/AppointmentBooking';
 import AppointmentList from './components/appointments/AppointmentList';
 
@@ -48,10 +49,39 @@ const ProtectedRoute = ({ children, userType }) => {
     }
 
     if (userType && user.user_type !== userType) {
-        return <Navigate to="/" />;
+        console.log(`Access denied: User type is ${user.user_type}, route requires ${userType}`);
+        // Redirect based on user type
+        if (user.user_type === 'provider') {
+            return <Navigate to="/provider/dashboard" />;
+        } else {
+            return <Navigate to="/services" />;
+        }
     }
 
     return <>{children}</>;
+};
+
+// Home route redirector based on user type
+const HomeRedirect = () => {
+    // Safely get user from localStorage
+    let user = null;
+    try {
+        const userString = localStorage.getItem('user');
+        if (userString) {
+            user = JSON.parse(userString);
+        }
+    } catch (error) {
+        console.error('Error parsing user from localStorage:', error);
+    }
+
+    // Redirect based on user type
+    if (user && user.user_type === 'provider') {
+        return <Navigate to="/provider/dashboard" />;
+    } else if (user) {
+        return <Navigate to="/services" />;
+    } else {
+        return <Navigate to="/login" />;
+    }
 };
 
 const App = () => {
@@ -106,22 +136,58 @@ const App = () => {
                                     </ProtectedRoute>
                                 }
                             />
+                            <Route
+                                path="/provider/services"
+                                element={
+                                    <ProtectedRoute userType="provider">
+                                        <ProviderDashboard />
+                                    </ProtectedRoute>
+                                }
+                            />
+                            <Route
+                                path="/provider/availability"
+                                element={
+                                    <ProtectedRoute userType="provider">
+                                        <ProviderAvailabilityCalendar />
+                                    </ProtectedRoute>
+                                }
+                            />
+                            <Route
+                                path="/provider/discounts"
+                                element={
+                                    <ProtectedRoute userType="provider">
+                                        <ProviderDashboard />
+                                    </ProtectedRoute>
+                                }
+                            />
 
                             {/* Consumer Routes */}
                             <Route
                                 path="/services"
                                 element={
-                                    <ServiceBrowser />
+                                    <ProtectedRoute userType="consumer">
+                                        <ServiceBrowser />
+                                    </ProtectedRoute>
                                 }
                             />
                             <Route
                                 path="/services/list"
                                 element={
-                                    <ServiceList />
+                                    <ProtectedRoute userType="consumer">
+                                        <ServiceList />
+                                    </ProtectedRoute>
                                 }
                             />
                             <Route
                                 path="/services/:serviceId/book"
+                                element={
+                                    <ProtectedRoute userType="consumer">
+                                        <AppointmentBooking />
+                                    </ProtectedRoute>
+                                }
+                            />
+                            <Route
+                                path="/services/:id/book"
                                 element={
                                     <ProtectedRoute userType="consumer">
                                         <AppointmentBooking />
@@ -138,7 +204,7 @@ const App = () => {
                             />
 
                             {/* Default Route */}
-                            <Route path="/" element={<Navigate to="/services" />} />
+                            <Route path="/" element={<HomeRedirect />} />
                         </Routes>
                     </Layout>
                 </Router>

@@ -47,6 +47,11 @@ const ServiceEdit = () => {
         }
     }, [serviceId]);
 
+    // Fetch service data when component mounts
+    useEffect(() => {
+        fetchServiceData();
+    }, [serviceId, fetchServiceData, navigate]);
+
     const fetchServiceData = async () => {
         try {
             const response = await services.getById(serviceId);

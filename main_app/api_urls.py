@@ -26,8 +26,8 @@ urlpatterns = [
     path('services/create/', views.ServiceCreateAPI.as_view(), name='api_service_create'),
     path('services/<int:service_id>/availability/', views.ServiceAvailabilityAPI.as_view(), name='api_service_availability'),
     
-    # Appointment endpoints
+    # Appointment endpoints - updated to use string UUID paths
     path('appointments/', views.AppointmentListAPI.as_view(), name='api_appointment_list'),
-    path('appointments/<int:appointment_id>/', views.AppointmentDetailAPI.as_view(), name='api_appointment_detail'),
-    path('appointments/<int:appointment_id>/status/', views.AppointmentStatusAPI.as_view(), name='api_appointment_status'),
+    path('appointments/<uuid:appointment_id>/', views.AppointmentDetailAPI.as_view(), name='api_appointment_detail'),
+    path('appointments/<uuid:appointment_id>/status/', views.AppointmentStatusAPI.as_view(), name='api_appointment_status'),
 ] 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, 
     Typography, 
     Paper, 
@@ -9,9 +9,7 @@ import { Box,
     Chip,
     CircularProgress,
     Alert,
-    Button,
-    Tabs,
-    Tab
+    Button
      } from '@mui/material';
 import { format } from 'date-fns';
 import { appointments } from '../../services/api';
@@ -21,26 +19,49 @@ const AppointmentList = () => {
     const [userAppointments, setUserAppointments] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [userType, setUserType] = useState('consumer');
+    const [userType, setUserType] = useState(null);
+    const [isFetching, setIsFetching] = useState(false);
+    const dataFetchedRef = useRef(false);
     const navigate = useNavigate();
 
+    // Separate effect for getting user type early in the component lifecycle
     useEffect(() => {
-        // Determine user type
-        const userStr = localStorage.getItem('user');
-        if (userStr) {
-            try {
+        try {
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
                 const userData = JSON.parse(userStr);
-                setUserType(userData.user_type);
-            } catch (e) {
-                console.error('Error parsing user data');
+                if (userData.user_type) {
+                    console.log('AppointmentList using user type:', userData.user_type);
+                    setUserType(userData.user_type);
+                    
+                    // Redirect provider to provider dashboard if they navigate directly to appointments
+                    if (userData.user_type === 'provider' && window.location.pathname === '/appointments') {
+                        console.log('Provider should use the appointments tab in provider dashboard');
+                    }
+                } else {
+                    console.error('User data does not contain user_type');
+                    setError('User type not found. Please log in again.');
+                }
+            } else {
+                console.error('No user data found');
+                setError('You need to log in to view appointments');
+                navigate('/login');
             }
+        } catch (e) {
+            console.error('Error parsing user data:', e);
+            setError('Error loading user data. Please log in again.');
+        }
+    }, [navigate]);
+
+    const fetchAppointments = useCallback(async () => {
+        // Prevent multiple simultaneous fetches
+        if (isFetching) {
+            console.log('Already fetching appointments, skipping');
+            return;
         }
 
-        fetchAppointments();
-    }, []);
-
-    const fetchAppointments = async () => {
         try {
+            setIsFetching(true);
             setLoading(true);
             const response = await appointments.getAll();
             console.log('Fetched appointments');
@@ -53,11 +74,22 @@ const AppointmentList = () => {
             setUserAppointments(sortedAppointments);
             setLoading(false);
         } catch (err) {
-            console.error('Error fetching appointments');
+            console.error('Error fetching appointments:', err);
             setError('Failed to load your appointments. Please try again later.');
             setLoading(false);
+        } finally {
+            setIsFetching(false);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        // Skip if we've already fetched the data or if user type is not set yet
+        if (dataFetchedRef.current || !userType) return;
+        
+        console.log("Fetching appointments for user type:", userType);
+        dataFetchedRef.current = true;
+        fetchAppointments();
+    }, [fetchAppointments, userType]);
 
     const getStatusColor = (status) => {
         switch (status) {
@@ -82,6 +114,42 @@ const AppointmentList = () => {
     const formatTime = (dateString) => {
         const date = new Date(dateString);
         return format(date, 'h:mm a');
+    };
+
+    // Function to handle appointment status changes with optimistic UI updates
+    const handleStatusChange = async (appointmentId, status) => {
+        try {
+            // Update UI immediately for better user experience
+            setUserAppointments(prevAppointments => 
+                prevAppointments.map(appt => 
+                    appt.id === appointmentId ? {...appt, status: status} : appt
+                )
+            );
+            
+            // Then make the API call
+            console.log(`Updating appointment ${appointmentId} to status ${status}`);
+            await appointments.updateStatus(appointmentId, status);
+            console.log(`Appointment ${appointmentId} status updated to ${status}`);
+            
+            // No need for setLoading here as we're using optimistic updates
+        } catch (err) {
+            console.error('Error updating appointment status:', err);
+            
+            // If there was an error, revert the optimistic UI update
+            setUserAppointments(prevAppointments => 
+                prevAppointments.map(appt => {
+                    // Only restore the appointment that had the error
+                    if (appt.id === appointmentId) {
+                        // Try to find the original status, but use a default if not found
+                        const originalAppointment = userAppointments.find(original => original.id === appointmentId);
+                        return originalAppointment || appt; // Use original or current as fallback
+                    }
+                    return appt;
+                })
+            );
+            
+            setError('Failed to update appointment status. Please try again.');
+        }
     };
 
     if (loading) {
@@ -237,15 +305,7 @@ const AppointmentList = () => {
                                             variant="outlined" 
                                             color="error" 
                                             sx={{ mt: 2 }}
-                                            onClick={async () => {
-                                                try {
-                                                    await appointments.updateStatus(appointment.id, 'cancelled');
-                                                    fetchAppointments();
-                                                } catch (err) {
-                                                    console.error('Error cancelling appointment');
-                                                    setError('Failed to cancel appointment. Please try again later.');
-                                                }
-                                            }}
+                                            onClick={() => handleStatusChange(appointment.id, 'cancelled')}
                                         >
                                             Cancel Appointment
                                         </Button>
@@ -256,15 +316,7 @@ const AppointmentList = () => {
                                             variant="outlined" 
                                             color="primary" 
                                             sx={{ mt: 2, ml: 2 }}
-                                            onClick={async () => {
-                                                try {
-                                                    await appointments.updateStatus(appointment.id, 'completed');
-                                                    fetchAppointments();
-                                                } catch (err) {
-                                                    console.error('Error completing appointment');
-                                                    setError('Failed to mark appointment as completed. Please try again later.');
-                                                }
-                                            }}
+                                            onClick={() => handleStatusChange(appointment.id, 'completed')}
                                         >
                                             Mark as Completed
                                         </Button>

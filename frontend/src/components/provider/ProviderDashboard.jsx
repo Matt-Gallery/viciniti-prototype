@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Box,
     Typography,
     Card,
@@ -35,7 +35,8 @@ const TabPanel = ({ children, value, index }) => (
     </div>
 );
 
-const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
+const ProviderDashboard = () => { 
+    const [tabValue, setTabValue] = useState(0);
     const [serviceList, setServiceList] = useState([]);
     const [selectedService, setSelectedService] = useState(null);
     const [appointmentList, setAppointmentList] = useState([]);
@@ -47,97 +48,196 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
     const [availabilityView, setAvailabilityView] = useState(true);
     const [providerId, setProviderId] = useState(null);
     const [availabilityData, setAvailabilityData] = useState({});
+    const [availabilityFetched, setAvailabilityFetched] = useState(false);
+    const [dataFetched, setDataFetched] = useState(false);
     const navigate = useNavigate();
 
-    useEffect(() => { fetchData();
-     }, []);
+    // Use useCallback to prevent recreation of this function on each render
+    const fetchData = useCallback(async () => { 
+        if (dataFetched) {
+            console.log('Data already fetched, skipping');
+            return;
+        }
 
-    useEffect(() => { if (providerId) {
-            console.log('Provider ID changed, fetching availability data for ID');
-            fetchAvailabilityData(providerId);
-         }
-    }, [providerId]);
-
-    const fetchData = async () => { try {
+        setLoading(true);
+        try {
+            // Check if token exists
+            const token = localStorage.getItem('token');
+            if (!token) {
+                console.error('No authentication token found');
+                setError('Authentication required. Please log in again.');
+                setLoading(false);
+                navigate('/login');
+                return;
+            }
+            
+            console.log('Starting to fetch data with token:', token.substring(0, 10) + '...');
+            
             // First try to load services
             const servicesRes = await servicesApi.getAll();
+            console.log('Services loaded:', servicesRes.data);
             setServiceList(servicesRes.data);
             
             // Then try to load appointments separately to handle potential 404
             try {
                 const appointmentsRes = await appointmentsApi.getAll();
+                console.log('Appointments loaded:', appointmentsRes.data.length);
                 setAppointmentList(appointmentsRes.data);
-             } catch (appointmentErr) { console.warn('Could not load appointments');
+             } catch (appointmentErr) { 
+                console.warn('Could not load appointments', appointmentErr);
                 // Don't set error for appointment issues, just set empty array
                 setAppointmentList([]);
              }
             
             // Get provider ID
-            try { const userStr = localStorage.getItem('user');
+            try { 
+                const userStr = localStorage.getItem('user');
                 if (userStr) {
                     const userData = JSON.parse(userStr);
-                    console.log('User data from localStorage');
+                    console.log('User data from localStorage:', userData);
                     
                     if (userData.provider_profile && userData.provider_profile.id) {
-                        console.log('Setting provider ID from profile data');
+                        console.log('Setting provider ID from profile data:', userData.provider_profile.id);
                         setProviderId(userData.provider_profile.id);
-                     } else { // If provider_profile is not in the user data, fetch it explicitly
+                     } else { 
+                        // If provider_profile is not in the user data, fetch it explicitly
                         console.log('Provider profile not found in user data, fetching from API');
                         const profileResponse = await availabilityApi.getProviderProfile();
-                        console.log('Provider profile API response');
+                        console.log('Provider profile API response:', profileResponse.data);
                         
                         if (profileResponse.data && profileResponse.data.id) {
-                            console.log('Setting provider ID from API');
+                            console.log('Setting provider ID from API:', profileResponse.data.id);
                             setProviderId(profileResponse.data.id);
                             
                             // Update the user data in localStorage with the provider profile
                             userData.provider_profile = profileResponse.data;
                             localStorage.setItem('user', JSON.stringify(userData));
-                         } else { console.error('Provider profile API response missing ID');
+                         } else { 
+                            console.error('Provider profile API response missing ID');
                             setError('Could not retrieve provider profile');
                          }
                     }
-                } else { console.error('No user data found in localStorage');
+                } else { 
+                    console.error('No user data found in localStorage');
                     setError('User data not found, please log in again');
+                    navigate('/login');
                  }
-            } catch (profileErr) { console.error('Error retrieving provider profile');
+            } catch (profileErr) { 
+                console.error('Error retrieving provider profile:', profileErr);
+                
+                // If it's a 401 Unauthorized error, the token might be invalid
+                if (profileErr.response && profileErr.response.status === 401) {
+                    console.error('Authentication failed (401). Clearing token and redirecting to login.');
+                    localStorage.removeItem('token');
+                    navigate('/login');
+                    return;
+                }
+                
                 setError('Failed to load provider profile');
              }
             
+            setDataFetched(true);
             setLoading(false);
-        } catch (err) { console.error('Error loading dashboard');
+        } catch (err) { 
+            console.error('Error loading dashboard:', err);
+            
+            // If it's a 401 Unauthorized error, redirect to login
+            if (err.response && err.response.status === 401) {
+                console.error('Authentication failed (401). Clearing token and redirecting to login.');
+                localStorage.removeItem('token');
+                navigate('/login');
+                return;
+            }
+            
             setError('Failed to load service data');
             setLoading(false);
          }
-    };
+    }, [navigate, dataFetched]);
 
-    const fetchAvailabilityData = async (provId) => { try {
-            console.log('Fetching availability data for provider ID');
+    const fetchAvailabilityData = useCallback(async (provId) => { 
+        // Skip if we've already fetched availability or we don't have a provider ID
+        if (availabilityFetched || !provId) {
+            console.log('Skipping availability fetch - already fetched or no provider ID');
+            return;
+        }
+        
+        try {
+            console.log('Fetching availability data for provider ID:', provId);
             const response = await availabilityApi.getForProvider(provId);
-            console.log('Availability data fetched');
-            setAvailabilityData(response.data);
-         } catch (error) { console.error('Error fetching availability data');
-            setError("Failed to load availability data");
-         }
-    };
+            console.log('Availability data fetched:', response.data);
+            
+            if (!response.data || Object.keys(response.data).length === 0) {
+                console.warn('No availability data returned from API');
+            }
+            
+            setAvailabilityData(response.data || {});
+            setAvailabilityFetched(true);
+        } catch (error) { 
+            console.error('Error fetching availability data:', error);
+            
+            // If it's a 401 Unauthorized error, the token might be invalid
+            if (error.response && error.response.status === 401) {
+                console.error('Authentication failed (401) when fetching availability');
+                // Don't redirect, as the main fetchData function will handle this
+            }
+            
+            setError("Failed to load availability data. Please try again.");
+        }
+    }, [availabilityFetched]);
+
+    // Initial data load with more explicit control
+    useEffect(() => { 
+        // Only fetch once when the component mounts
+        if (dataFetched) {
+            console.log("Data already fetched, skipping initial fetch");
+            return;
+        }
+        console.log("Initial data fetch");
+        fetchData();
+    }, [fetchData, dataFetched]);
+
+    // Load availability when provider ID is available - with stricter controls
+    useEffect(() => { 
+        if (!providerId) {
+            console.log("No provider ID available, skipping availability fetch");
+            return;
+        }
+        
+        if (availabilityFetched) {
+            console.log("Availability already fetched, skipping fetch");
+            return;
+        }
+        
+        console.log('Provider ID available, fetching availability data');
+        fetchAvailabilityData(providerId);
+    }, [providerId, fetchAvailabilityData, availabilityFetched]);
 
     const handleStatusChange = async (appointmentId, status) => {
         try {
             await appointmentsApi.updateStatus(appointmentId, status);
-            fetchData(); // Refresh data
+            // Instead of calling fetchData which could trigger loops
+            // Only refresh the appointments data
+            try {
+                const appointmentsRes = await appointmentsApi.getAll();
+                setAppointmentList(appointmentsRes.data);
+            } catch (err) {
+                console.error('Failed to refresh appointments after status change');
+            }
         } catch (err) {
             setError('Failed to update appointment status');
         }
     };
 
-    const handleOpenDeleteDialog = (service, event) => { event.stopPropagation();
+    const handleOpenDeleteDialog = (service, event) => { 
+        event.stopPropagation();
         setServiceToDelete(service);
         setDeleteDialogOpen(true);
-     };
+    };
 
-    const handleCloseDeleteDialog = () => { setDeleteDialogOpen(false);
+    const handleCloseDeleteDialog = () => { 
+        setDeleteDialogOpen(false);
         setServiceToDelete(null);
-     };
+    };
 
     const handleDeleteService = async () => {
         if (!serviceToDelete) return;
@@ -153,8 +253,14 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                 setSelectedService(null);
             }
             
-            // Refresh the service list
-            fetchData();
+            // Refresh only the services list without triggering a full refresh
+            try {
+                const servicesRes = await servicesApi.getAll();
+                setServiceList(servicesRes.data);
+            } catch (err) {
+                console.error('Failed to refresh services after deletion');
+            }
+            setDeleteLoading(false);
         } catch (err) {
             console.error('Error deleting service');
             setError('Failed to delete service. Please try again.');
@@ -162,18 +268,21 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
         }
     };
     
-    const handleSelectService = (service) => { setSelectedService(service);
+    const handleSelectService = (service) => { 
+        setSelectedService(service);
         setAvailabilityView(false);
-     };
+    };
     
-    const handleBackToAvailability = () => { setSelectedService(null);
+    const handleBackToAvailability = () => { 
+        setSelectedService(null);
         setAvailabilityView(true);
-     };
+    };
     
     const handleAvailabilityChange = async (availability) => {
         console.log('Availability updated:', availability);
         
         if (!providerId) {
+            console.error('Cannot save availability without providerId');
             return;
         }
         
@@ -185,26 +294,27 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
         }
         
         try {
-            console.log('Saving availability with provider ID');
+            console.log('Saving availability with provider ID:', providerId);
             const response = await availabilityApi.save(providerId, availability);
-            console.log('Availability saved successfully');
+            console.log('Availability saved successfully:', response.data);
             
-            // Update the local state with the saved availability data
-            setAvailabilityData(response.data);
+            // Update the local state with the saved availability data ONLY if response contains data
+            if (response.data && Object.keys(response.data).length > 0) {
+                setAvailabilityData(response.data);
+            }
             
             // Show success message temporarily
             setError('');
             const successMessage = 'Availability saved successfully';
-            // Display success message temporarily
             setError(successMessage);
             setTimeout(() => {
                 setError(prev => prev === successMessage ? '' : prev);
             }, 3000);
             
-            // Refresh the availability data
-            fetchAvailabilityData(providerId);
+            // Mark as fetched to prevent another immediate fetch
+            setAvailabilityFetched(true);
         } catch (error) {
-            console.error('Error saving availability');
+            console.error('Error saving availability:', error);
             setError('Failed to save availability. Please try again.');
         }
     };
@@ -213,12 +323,13 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
         navigate('/provider/services/create');
     };
 
-    if (loading) { return (
+    if (loading) { 
+        return (
             <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
                 <CircularProgress />
             </Box>
         );
-     }
+    }
 
     return (
         <Box sx={{ p: 3 }}>
@@ -397,11 +508,20 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                                 </Box>
                             </Box>
                         ) : (
-                            <ProviderAvailabilityCalendar 
-                                onAvailabilityChange={handleAvailabilityChange}
-                                providerId={providerId || undefined}
-                                initialTimeBlocks={availabilityData} 
-                            />
+                            <>
+                                {loading ? (
+                                    <Box display="flex" justifyContent="center" alignItems="center" height="400px">
+                                        <CircularProgress />
+                                    </Box>
+                                ) : (
+                                    <ProviderAvailabilityCalendar 
+                                        onAvailabilityChange={handleAvailabilityChange}
+                                        providerId={providerId || undefined}
+                                        initialTimeBlocks={availabilityData} 
+                                        key={`provider-calendar-${providerId}`}
+                                    />
+                                )}
+                            </>
                         )}
                     </Box>
                 </Box>

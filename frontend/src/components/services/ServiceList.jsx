@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Box,
@@ -19,20 +19,36 @@ const ServiceList = () => {
     const [error, setError] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
 
-    useEffect(() => {
-        fetchServices();
-    }, []);
-
-    const fetchServices = async () => {
+    const fetchServices = useCallback(async () => {
         try {
             const response = await services.getAll();
             setServiceList(response.data);
             setLoading(false);
         } catch (err) {
-            setError('Failed to load services');
-            setLoading(false);
+            console.error('Error fetching services:', err);
+            if (err.response && err.response.status === 401) {
+                // If unauthorized, redirect to login
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                navigate('/login', { replace: true });
+            } else {
+                setError('Failed to load service data');
+                setLoading(false);
+            }
         }
-    };
+    }, [navigate, setServiceList, setLoading, setError]);
+
+    useEffect(() => {
+        // Check if user is logged in
+        const token = localStorage.getItem('token');
+        if (!token) {
+            // If not logged in, redirect to login page
+            navigate('/login', { replace: true });
+            return;
+        }
+        
+        fetchServices();
+    }, [navigate, fetchServices]);
 
     const handleBooking = (serviceId) => {
         navigate(`/services/${serviceId}/book`);

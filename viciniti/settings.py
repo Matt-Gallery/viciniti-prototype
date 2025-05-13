@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.gis',  # Enable GeoDjango support
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
@@ -80,18 +81,22 @@ WSGI_APPLICATION = 'viciniti.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': 'db.sqlite3',
+        'ENGINE': 'django.contrib.gis.db.backends.postgis',
+        'NAME': 'viciniti',
+        'USER': 'postgres',
+        'PASSWORD': 'newpassword',
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
 }
 
-# PostgreSQL configuration (uncomment to use)
+# PostgreSQL configuration with PostGIS
 # DATABASES = {
 #     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
+#         'ENGINE': 'django.contrib.gis.db.backends.postgis',
 #         'NAME': 'viciniti',
-#         'USER': 'viciniti_admin',
-#         'PASSWORD': 'password',
+#         'USER': 'postgres',  # Change to your PostgreSQL username
+#         'PASSWORD': 'newpassword',  # Updated password
 #         'HOST': 'localhost',
 #         'PORT': '5432',
 #     }

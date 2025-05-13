@@ -1,7 +1,6 @@
-import React, {   useState, useEffect, forwardRef, useImperativeHandle    } from 'react';
+import React, {useState, useEffect, forwardRef, useImperativeHandle, useCallback, useRef} from 'react';
 import { Box, 
     Typography, 
-    Paper, 
     Button, 
     Dialog,
     DialogTitle,
@@ -13,15 +12,14 @@ import { Box,
     Alert,
     IconButton,
     Chip,
-    Divider,
     Tooltip,
      } from '@mui/material';
-import { LocalizationProvider      } from '@mui/x-date-pickers/LocalizationProvider';
-import { AdapterDateFns      } from '@mui/x-date-pickers/AdapterDateFns';
-import { format, addDays, areIntervalsOverlapping      } from 'date-fns';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { format, addDays, areIntervalsOverlapping } from 'date-fns';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { availability as availabilityApi, appointments as appointmentsApi      } from '../../services/api';
+import { availability as availabilityApi, appointments as appointmentsApi } from '../../services/api';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 
@@ -33,9 +31,10 @@ const AppointmentCalendar = forwardRef(({ mode,
     providerId,
     serviceId,
     service,
-    initialTimeBlocks,
+    timeBlocks: initialTimeBlocks,
     daysToShow = 5,
-    title
+    title,
+    serviceAvailabilityUrl  // New prop for custom URL with location parameters
  }, ref) => { const [selectedDay, setSelectedDay] = useState(new Date());
     const [days, setDays] = useState([]);
     const [timeBlocks, setTimeBlocks] = useState({ });
@@ -62,178 +61,423 @@ const AppointmentCalendar = forwardRef(({ mode,
     
     const [providerAppointments, setProviderAppointments] = useState([]);
     
-    // Expose methods to parent component via ref
-    useImperativeHandle(ref, () => ({
-        fetchUserAppointments: async () => {
-            console.log('Refreshing appointments and availability');
-            // Refresh user appointments first
-            const appointments = await fetchUserAppointments();
-            console.log('Appointments refreshed:', appointments);
+    // Add flags to track if data has been fetched to avoid multiple fetches
+    const [availabilityFetched, setAvailabilityFetched] = useState(false);
+    const [appointmentsFetched, setAppointmentsFetched] = useState(false);
+    const dataFetchedRef = useRef(false);
+    
+    // Define all functions before they are used in useEffect with useCallback
+    const fetchProviderAvailability = useCallback(async (provId, forceRefresh = false) => { 
+        if (!provId || (availabilityFetched && !forceRefresh) || (loading && !forceRefresh)) {
+            console.log('Skipping availability fetch - already fetched, loading, or no provider ID');
+            return;
+        }
+        
+        try {
+            setLoading(true);
+            console.log('Fetching availability for provider ID:', provId);
+            const response = await availabilityApi.getForProvider(provId);
+            console.log('Provider availability response:', response.data);
             
-            // Also refresh service availability if in consumer mode
-            if (mode === 'consumer' && serviceId) {
-                console.log('Refreshing service availability for service:', serviceId);
-                await fetchServiceAvailability(serviceId);
+            // Convert ISO strings to Date objects
+            const formattedAvailability = {};
+            
+            // Check if response data exists and is not empty
+            if (response.data && Object.keys(response.data).length > 0) {
+                Object.entries(response.data).forEach(([dateStr, blocks]) => {
+                    if (Array.isArray(blocks)) {
+                        formattedAvailability[dateStr] = blocks.map((block) => {
+                            console.log('Processing block:', block);
+                            // Ensure start and end are converted to Date objects
+                            return {
+                                id: block.id || `block-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                        start: new Date(block.start),
+                        end: new Date(block.end)
+                            };
+                        });
+                    } else {
+                        formattedAvailability[dateStr] = [];
+                    }
+                });
+            } else {
+                console.warn('No availability data returned from API');
             }
             
-            return appointments;
+            console.log('Formatted availability:', formattedAvailability);
+            
+            // Merge with initial availability to ensure all days have entries
+            const mergedAvailability = {...timeBlocks};
+            
+            // Add all the loaded availability to the merged object
+            Object.entries(formattedAvailability).forEach(([dateStr, blocks]) => {
+                mergedAvailability[dateStr] = blocks;
+             });
+            
+            // Ensure all days in our view have entries (even if empty)
+            days.forEach(day => {
+                const dateStr = format(day, 'yyyy-MM-dd');
+                if (!mergedAvailability[dateStr]) {
+                    mergedAvailability[dateStr] = [];
+                 }
+            });
+            
+            console.log('Setting time blocks with:', mergedAvailability);
+            setTimeBlocks(mergedAvailability);
+            setAvailabilityFetched(true);
+            setLoading(false);
+        } catch (err) {
+            console.error('Error fetching availability:', err);
+            setError('Failed to load availability data');
+            setLoading(false);
+         }
+    }, [days, loading, timeBlocks, availabilityFetched]);
+    
+    const fetchServiceAvailability = useCallback(async (forceRefresh = false) => {
+        if (!serviceId || (loading && !forceRefresh) || (availabilityFetched && !forceRefresh)) {
+            console.log('Skipping service availability fetch - loading, already fetched, or no service ID');
+            return;
+        }
+        
+        try {
+            setLoading(true);
+            
+            // Use custom URL if provided (for location-based pricing), otherwise use default URL
+            let url = serviceAvailabilityUrl;
+            if (!url) {
+                url = `/services/${serviceId}/availability/`;
+            }
+            console.log(`Fetching availability from: ${url}`);
+            
+            // Use a direct API call with fresh headers for authentication
+            const token = localStorage.getItem('token');
+            const headers = {
+                'Content-Type': 'application/json',
+            };
+            
+            if (token) {
+                headers['Authorization'] = `Token ${token}`;
+            }
+            
+            // Make a fresh request to ensure we're not hitting a cached response
+            const fullUrl = `${process.env.REACT_APP_API_URL || 'http://localhost:8000/api'}${url}`;
+            console.log(`Making direct API request to: ${fullUrl}`);
+            
+            const response = await fetch(fullUrl, {
+                method: 'GET',
+                headers: headers,
+                cache: 'no-store' // Ensure we don't use cached data
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Error fetching availability: ${response.status} ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            console.log('Availability data from service endpoint:', data);
+            
+            // Process the data to ensure dates are properly formatted
+            const formattedBlocks = {};
+            if (data && Object.keys(data).length > 0) {
+                Object.entries(data).forEach(([dateStr, blocks]) => {
+                if (Array.isArray(blocks)) {
+                        formattedBlocks[dateStr] = blocks.map(block => ({
+                            ...block,
+                        start: new Date(block.start),
+                        end: new Date(block.end)
+                    }));
+                } else {
+                        formattedBlocks[dateStr] = [];
+                }
+            });
+            }
+            
+            console.log('Formatted service availability blocks:', formattedBlocks);
+            setTimeBlocks(formattedBlocks);
+            setAvailabilityFetched(true);
+            setLoading(false);
+        } catch (error) {
+            console.error('Error fetching service availability:', error);
+            setError('Failed to load availability. Please try again.');
+            setLoading(false);
+        }
+    }, [serviceId, serviceAvailabilityUrl, loading, availabilityFetched]);
+
+    // Fetch user's existing appointments
+    const fetchUserAppointments = useCallback(async (forceRefresh = false) => {
+        if (appointmentsFetched && !forceRefresh) {
+            console.log('Skipping appointment fetch - already fetched');
+            return [];
+        }
+        
+        try {
+            const userStr = localStorage.getItem('user');
+            if (!userStr) {
+                console.log('No user logged in, skipping appointment fetch');
+                return [];
+            }
+
+            console.log('Fetching user appointments');
+            
+            // Make a direct API call with fresh headers to avoid caching issues
+            const token = localStorage.getItem('token');
+            const headers = {
+                'Content-Type': 'application/json',
+            };
+            
+            if (token) {
+                headers['Authorization'] = `Token ${token}`;
+            }
+            
+            // Use fetch directly to bypass any caching
+            const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+            const response = await fetch(`${apiUrl}/appointments/`, {
+                method: 'GET',
+                headers: headers,
+                cache: 'no-store' // Ensure we don't use cached data
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Error fetching appointments: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log('User appointments loaded (direct fetch):', data.length);
+            
+            // Update state immediately
+            setUserAppointments(data);
+            setAppointmentsFetched(true);
+            
+            // Force a re-render
+            setTimeout(() => {
+                // Force update of timeBlocks to trigger re-render
+                setTimeBlocks(prev => ({...prev}));
+            }, 50);
+            
+            return data;
+        } catch (err) {
+            console.error('Error fetching user appointments:', err);
+            
+            // Fallback to using the API service if direct fetch failed
+            try {
+                console.log('Attempting fallback appointments fetch via API service');
+                const result = await appointmentsApi.getAll();
+                console.log('Fallback user appointments loaded:', result.data.length);
+                setUserAppointments(result.data);
+                setAppointmentsFetched(true);
+                return result.data;
+            } catch (fallbackErr) {
+                console.error('Fallback appointments fetch also failed:', fallbackErr);
+                return [];
+            }
+        }
+    }, [appointmentsFetched]);
+    
+    // Fetch provider's appointments
+    const fetchProviderAppointments = useCallback(async (forceRefresh = false) => { 
+        if (mode !== 'provider' || !providerId || (appointmentsFetched && !forceRefresh)) return;
+        
+        try {
+            console.log('Fetching provider appointments');
+            const response = await appointmentsApi.getAllForProvider();
+            
+            console.log('Provider appointments loaded');
+            setProviderAppointments(response.data);
+            setAppointmentsFetched(true);
+         } catch (err) { 
+            console.error('Error fetching provider appointments');
+            // Don't set error - this is supplementary data
+         }
+    }, [mode, providerId, appointmentsFetched]);
+    
+    // Expose methods to parent component via ref with better refresh handling
+    useImperativeHandle(ref, () => ({
+        fetchUserAppointments: async () => {
+            console.log('Calendar refresh requested via ref');
+            
+            try {
+                // Reset flags to force a complete refresh
+                dataFetchedRef.current = false;
+                setAvailabilityFetched(false);
+                setAppointmentsFetched(false);
+                
+                // Refresh user appointments first for immediate UI update
+                console.log('Refreshing appointments data');
+                const newAppointments = await fetchUserAppointments(true); // Force refresh
+                console.log('Appointments refreshed successfully', newAppointments ? newAppointments.length : 0);
+                
+                // Then refresh availability data based on mode
+                if (mode === 'consumer' && serviceId) {
+                    console.log('Refreshing service availability for service:', serviceId);
+                    await fetchServiceAvailability(true); // Force refresh
+                } else if (mode === 'provider' && providerId) {
+                    console.log('Refreshing provider availability for provider:', providerId);
+                    await fetchProviderAvailability(providerId, true); // Force refresh
+                    await fetchProviderAppointments(true); // Force refresh
+                }
+                
+                // Force a state update to trigger a re-render
+                setTimeBlocks(prev => ({...prev}));
+                
+                return newAppointments;
+            } catch (error) {
+                console.error('Error refreshing calendar data:', error);
+                // Still update the state to trigger a re-render even if there was an error
+                setTimeBlocks(prev => ({...prev}));
+                // Return an empty array rather than throwing, to handle errors gracefully
+                return [];
+            }
         }
     }));
     
     // Generate days array (today + next N days)
-    useEffect(() => { const newDays = [];
+    useEffect(() => { 
+        if (dataFetchedRef.current) return;
+        
+        const newDays = [];
         for (let i = 0; i < daysToShow; i++) {
             newDays.push(addDays(new Date(), i));
          }
         setDays(newDays);
         
         // Initialize empty availability for each day
-        const initialAvailability = {  };
-        newDays.forEach(day => { const dateStr = format(day, 'yyyy-MM-dd');
+        const initialAvailability = {};
+        newDays.forEach(day => {
+            const dateStr = format(day, 'yyyy-MM-dd');
             initialAvailability[dateStr] = [];
          });
         
-        setTimeBlocks(initialTimeBlocks || initialAvailability);
+        // Only overwrite timeBlocks with initialTimeBlocks if it exists
+        if (initialTimeBlocks && Object.keys(initialTimeBlocks).length > 0) {
+            console.log('Initializing with provided time blocks:', initialTimeBlocks);
+            setTimeBlocks(initialTimeBlocks);
+        } else {
+            setTimeBlocks(initialAvailability);
+        }
         
-        // Load data based on mode
-        if (mode === 'provider' && providerId) { fetchProviderAvailability(providerId);
-            fetchProviderAppointments(); // Fetch provider's appointments
-         } else if (mode === 'consumer' && serviceId) { fetchServiceAvailability(serviceId);
-            fetchUserAppointments(); // Fetch user's existing appointments
-         }
-    }, [mode, providerId, serviceId, daysToShow, initialTimeBlocks]); 
+        dataFetchedRef.current = true;
+    }, [daysToShow, initialTimeBlocks]);
     
-    const fetchProviderAvailability = async (provId) => { try {
-            setLoading(true);
-            console.log('Fetching availability for provider ID');
-            const response = await availabilityApi.getForProvider(provId);
+    // Initialize data loading once after component mounts
+    useEffect(() => {
+        // Short-circuit if nothing to load
+        if (!mode || (mode === 'provider' && !providerId) || (mode === 'consumer' && !serviceId)) {
+            return;
+        }
+        
+        // Prevent multiple renders from causing multiple data loads
+        if (availabilityFetched && appointmentsFetched) {
+            console.log('[Calendar] Data already fetched, skipping data load');
+            return;
+        }
+        
+        // Use a flag to prevent multiple concurrent fetches
+        let isMounted = true;
+        
+        const loadData = async () => {
+            if (!isMounted) return;
             
-            // Convert ISO strings to Date objects
-            const formattedAvailability = { };
-            Object.entries(response.data).forEach(([dateStr, blocks]) => { if (Array.isArray(blocks)) {
-                    formattedAvailability[dateStr] = blocks.map((block) => ({
-                        id: block.id,
-                        start: new Date(block.start),
-                        end: new Date(block.end)
-                     }));
-                } else { formattedAvailability[dateStr] = [];
-                 }
-            });
+            console.log(`[Calendar] Loading data for mode=${mode}, providerId=${providerId}, serviceId=${serviceId}`);
             
-            // Merge with initial availability to ensure all days have entries
-            const mergedAvailability = { ...timeBlocks  };
-            
-            // Add all the loaded availability to the merged object
-            Object.entries(formattedAvailability).forEach(([dateStr, blocks]) => { mergedAvailability[dateStr] = blocks;
-             });
-            
-            // Ensure all days in our view have entries (even if empty)
-            days.forEach(day => { const dateStr = format(day, 'yyyy-MM-dd');
-                if (!mergedAvailability[dateStr]) {
-                    mergedAvailability[dateStr] = [];
-                 }
-            });
-            
-            setTimeBlocks(mergedAvailability);
-            setLoading(false);
-        } catch (err) { console.error('Error fetching availability');
-            setError('Failed to load availability data');
-            setLoading(false);
-         }
-    };
-    
-    const fetchServiceAvailability = async (servId) => {
-        try {
-            setLoading(true);
-            console.log('Fetching availability for service ID');
-            const response = await availabilityApi.getForService(servId);
-            
-            // Convert ISO strings to Date objects
-            const formattedAvailability = {};
-            Object.entries(response.data).forEach(([dateStr, blocks]) => {
-                if (Array.isArray(blocks)) {
-                    formattedAvailability[dateStr] = blocks.map((block) => ({
-                        id: block.id,
-                        start: new Date(block.start),
-                        end: new Date(block.end)
-                    }));
-                } else {
-                    formattedAvailability[dateStr] = [];
+            try {
+                // Force loading state
+                setLoading(true);
+                
+                // Load data based on mode
+                if (mode === 'provider' && providerId) { 
+                    console.log('[Calendar] Provider mode - fetching availability and appointments');
+                    if (!availabilityFetched) await fetchProviderAvailability(providerId);
+                    if (!appointmentsFetched) await fetchProviderAppointments();
+                } else if (mode === 'consumer' && serviceId) { 
+                    console.log('[Calendar] Consumer mode - fetching service availability and user appointments');
+                    if (!availabilityFetched) await fetchServiceAvailability();
+                    if (!appointmentsFetched) await fetchUserAppointments();
                 }
-            });
-            
-            console.log('Service availability loaded');
-            setTimeBlocks(formattedAvailability);
-            setLoading(false);
-        } catch (err) {
-            console.error('Error fetching service availability');
-            setError('Failed to load appointment options');
-            setLoading(false);
-        }
-    };
-
-    // Fetch user's existing appointments
-    const fetchUserAppointments = async () => {
-        try {
-            const userStr = localStorage.getItem('user');
-            if (!userStr) {
-                console.log('No user logged in, skipping appointment fetch');
-                return;
+                
+                setLoading(false);
+                console.log('[Calendar] Data loading complete');
+            } catch (error) {
+                console.error('[Calendar] Error loading data:', error);
+                setError('Failed to load calendar data. Please try again.');
+                setLoading(false);
             }
-
-            console.log('Fetching user appointments');
-            const result = await appointmentsApi.getAll();
-            
-            console.log('User appointments loaded');
-            setUserAppointments(result.data);
-            return result.data;
-        } catch (err) {
-            console.error('Error fetching user appointments');
-            // Don't set error - this is supplementary data
-            return [];
-        }
-    };
+        };
+        
+        loadData();
+        
+        return () => {
+            isMounted = false;
+        };
+    // Use a more specific set of dependencies to prevent unnecessary reloads
+    }, [
+        mode, providerId, serviceId, 
+        fetchProviderAvailability, fetchProviderAppointments, 
+        fetchServiceAvailability, fetchUserAppointments,
+        availabilityFetched, appointmentsFetched
+    ]);
     
-    const saveAvailability = async () => { if (mode !== 'provider' || !providerId) {
+    const saveAvailability = async () => { 
+        if (mode !== 'provider' || !providerId) {
             console.error('Cannot save availability in provider mode or providerId is missing');
             return;
          }
         
-        try { setLoading(true);
+        try { 
+            setLoading(true);
             console.log('Saving availability for provider ID');
             
             // Convert Date objects to ISO strings for API
-            const apiAvailability = { };
-            Object.entries(timeBlocks).forEach(([dateStr, blocks]) => { if (blocks.length > 0) {
-                    apiAvailability[dateStr] = blocks.map((block) => ({
+            const apiAvailability = {};
+            Object.entries(timeBlocks).forEach(([dateStr, blocks]) => { 
+                if (blocks.length > 0) {
+                    console.log(`Processing blocks for ${dateStr}:`, blocks);
+                    
+                    apiAvailability[dateStr] = blocks.map((block) => {
+                        // Ensure both start and end are properly formatted as ISO strings
+                        const startDate = block.start instanceof Date ? block.start : new Date(block.start);
+                        const endDate = block.end instanceof Date ? block.end : new Date(block.end);
+                        
+                        return {
                         id: block.id,
-                        start: block.start.toISOString(),
-                        end: block.end.toISOString()
-                     }));
+                            start: startDate.toISOString(),
+                            end: endDate.toISOString()
+                        };
+                    });
                 }
             });
             
-            console.log('Sending API availability data');
+            console.log('Sending API availability data:', apiAvailability);
             const response = await availabilityApi.save(providerId, apiAvailability);
-            console.log('API response from saving availability');
+            console.log('API response from saving availability:', response.data);
+            
+            // Process response data to ensure dates are properly converted
+            const updatedBlocks = {};
+            if (response.data && Object.keys(response.data).length > 0) {
+                Object.entries(response.data).forEach(([dateStr, blocks]) => {
+                    if (Array.isArray(blocks)) {
+                        updatedBlocks[dateStr] = blocks.map(block => ({
+                            id: block.id,
+                            start: new Date(block.start),
+                            end: new Date(block.end)
+                        }));
+                    } else {
+                        updatedBlocks[dateStr] = [];
+                    }
+                });
+                
+                // Update our time blocks with the processed data from the server
+                setTimeBlocks(updatedBlocks);
+            }
+            
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
             setLoading(false);
-        } catch (err) { console.error('Error saving availability');
+        } catch (err) { 
+            console.error('Error saving availability:', err);
             setError('Failed to save availability data');
             setLoading(false);
          }
     };
     
-    
-    const handleDaySelect = (day) => { if (mode !== 'provider') return;
-        
-        setSelectedDay(day);
-        setDialogOpen(true);
-        setStartTime(null);
-        setEndTime(null);
-        setTimeError('');
-     };
     
     const handleAddBlock = (day) => { if (mode !== 'provider') return;
         
@@ -268,7 +512,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         const dateStr = format(selectedDay, 'yyyy-MM-dd');
         console.log('Date string for block');
         
-        const newBlock = { id: `block-${Date.now() }`,
+        const newBlock = { id: `block-${Date.now()}`,
             start: new Date(
                 selectedDay.getFullYear(),
                 selectedDay.getMonth(),
@@ -292,11 +536,12 @@ const AppointmentCalendar = forwardRef(({ mode,
         const hasOverlap = existingBlocks.some(block => 
             areIntervalsOverlapping(
                 { start: block.start, end: block.end },
-                { start: block.start, end: block.end }
+                { start: newBlock.start, end: newBlock.end }
             )
         );
         
-        if (hasOverlap) { setTimeError('Time block overlaps with existing availability');
+        if (hasOverlap) { 
+            setTimeError('Time block overlaps with existing availability');
             return;
          }
         
@@ -313,32 +558,55 @@ const AppointmentCalendar = forwardRef(({ mode,
         setDialogOpen(false);
         
         // Notify parent component if callback provided
-        if (onAvailabilityChange) { console.log('Notifying parent of availability change');
+        if (onAvailabilityChange) { 
+            console.log('Notifying parent of availability change');
             onAvailabilityChange(newAvailability);
-         } else { console.warn('No onAvailabilityChange callback provided');
+        } else { 
+            console.warn('No onAvailabilityChange callback provided');
          }
     };
     
-    const handleDeleteBlock = (day, blockId) => { if (mode !== 'provider') return;
+    const handleDeleteBlock = (day, blockId) => { 
+        if (mode !== 'provider') return;
+        
+        console.log(`Deleting block ${blockId} for day:`, day);
         
         const dateStr = format(day, 'yyyy-MM-dd');
         const existingBlocks = timeBlocks[dateStr] || [];
-        const updatedBlocks = existingBlocks.filter(block => block.id !== blockId);
+        console.log('Existing blocks:', existingBlocks);
+        
+        const updatedBlocks = existingBlocks.filter(block => {
+            // Handle both string and object IDs for compatibility
+            const blockIdString = typeof block.id === 'object' ? block.id.toString() : block.id;
+            const targetIdString = typeof blockId === 'object' ? blockId.toString() : blockId;
+            return blockIdString !== targetIdString;
+        });
+        
+        console.log('Updated blocks after deletion:', updatedBlocks);
         
         const newAvailability = {
             ...timeBlocks,
             [dateStr]: updatedBlocks
          };
         
+        console.log('Setting new availability after deletion:', newAvailability);
         setTimeBlocks(newAvailability);
         
         // Notify parent component if callback provided
-        if (onAvailabilityChange) { onAvailabilityChange(newAvailability);
-         }
+        if (onAvailabilityChange) { 
+            console.log('Notifying parent of availability change after deletion');
+            onAvailabilityChange(newAvailability);
+        }
     };
     
-    const handleBlockClick = (block) => { if (mode === 'consumer' && onBlockClick) {
-            console.log('Block clicked for booking');
+    const handleBlockClick = (block, event) => { 
+        if (event) {
+            event.stopPropagation();
+            event.preventDefault();
+        }
+        
+        if (mode === 'consumer' && onBlockClick) {
+            console.log('Time block clicked for booking:', block);
             onBlockClick(block);
          }
     };
@@ -354,8 +622,25 @@ const AppointmentCalendar = forwardRef(({ mode,
     const timeSlots = generateTimeSlots();
     
     // Get blocks for a specific day
-    const getBlocksForDay = (day) => { const dateStr = format(day, 'yyyy-MM-dd');
-        return timeBlocks[dateStr] || [];
+    const getBlocksForDay = (day) => { 
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const blocks = timeBlocks[dateStr] || [];
+        
+        // Ensure all blocks have proper Date objects
+        const processedBlocks = blocks.map(block => {
+            // Convert string dates to Date objects if needed
+            const start = block.start instanceof Date ? block.start : new Date(block.start);
+            const end = block.end instanceof Date ? block.end : new Date(block.end);
+            
+            return {
+                ...block,
+                start,
+                end
+            };
+        });
+        
+        console.log(`Getting blocks for day ${dateStr}:`, processedBlocks);
+        return processedBlocks;
      };
 
     // Get existing user appointments for a specific day
@@ -364,20 +649,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
          });
-    };
-    
-    // Fetch provider's appointments
-    const fetchProviderAppointments = async () => { if (mode !== 'provider' || !providerId) return;
-        
-        try {
-            console.log('Fetching provider appointments');
-            const response = await appointmentsApi.getAllForProvider();
-            
-            console.log('Provider appointments loaded');
-            setProviderAppointments(response.data);
-         } catch (err) { console.error('Error fetching provider appointments');
-            // Don't set error - this is supplementary data
-         }
     };
     
     // Get provider appointments for a specific day
@@ -391,94 +662,98 @@ const AppointmentCalendar = forwardRef(({ mode,
     };
     
     // Calculate position and height for a time block
-    const getBlockStyle = (block, isUserAppointment = false, appointment) => { const startMinutes = block.start.getHours() * 60 + block.start.getMinutes();
-        const endMinutes = block.end.getHours() * 60 + block.end.getMinutes();
+    const getBlockStyle = (block, isUserAppointment = false, appointment) => {
+        // Calculate position and dimensions based on the time
+        const startTime = new Date(block.start);
+        const endTime = new Date(block.end);
         
-        const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
-        const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
+        const startHour = startTime.getHours() + startTime.getMinutes() / 60;
+        const endHour = endTime.getHours() + endTime.getMinutes() / 60;
         
-        const commonStyles = {
+        const top = ((startHour - WORKING_HOURS_START) * HOUR_HEIGHT);
+        const height = (endHour - startHour) * HOUR_HEIGHT;
+        
+        // Define base style
+        const baseStyle = {
             position: 'absolute',
-            top: `${top }px`,
-            height: `${ height }px`,
-            width: 'calc(100% - 8px)',
-            borderRadius: '3px',
-            padding: '2px 4px',
-            paddingTop: '0px', // Reduce top padding to move content up
-            boxSizing: 'border-box',
+            top: `${top}px`,
+            left: 0,
+            right: 0,
+            height: `${height}px`,
+            borderRadius: '4px',
+            padding: '4px 8px',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'flex-start',
-            fontSize: '0.75rem',
-            zIndex: 3, // Ensure all blocks have z-index lower than headers
-            cursor: 'pointer',
+            justifyContent: 'space-between',
+            zIndex: 10,
+            cursor: isUserAppointment ? 'pointer' : (mode === 'consumer' ? 'pointer' : 'default'),
         };
         
-        if (appointment) { // For provider mode, show different colors based on appointment status
-            const statusColors = {
-                confirmed: {
-                    bg: '#d4edda', // Light green
-                    border: '#c3e6cb',
-                    hover: '#c3e6cb',
-                    text: '#155724'
-                 },
-                pending: { bg: '#fff3cd', // Light yellow
-                    border: '#ffeeba',
-                    hover: '#ffeeba',
-                    text: '#856404'
-                 },
-                cancelled: { bg: '#f8d7da', // Light red
-                    border: '#f5c6cb',
-                    hover: '#f5c6cb',
-                    text: '#721c24'
-                 },
-                completed: { bg: '#cce5ff', // Light blue
-                    border: '#b8daff',
-                    hover: '#b8daff',
-                    text: '#004085'
-                 }
-            };
+        // Style for user appointments based on status
+        if (isUserAppointment || appointment) {
+            const status = appointment ? appointment.status : block.status;
             
-            const colorSet = statusColors[appointment.status] || statusColors.confirmed;
-            
-            return { ...commonStyles,
-                backgroundColor: colorSet.bg,
-                border: `1px solid ${colorSet.border }`,
-                color: colorSet.text,
-                zIndex: 4, // Higher than availability blocks but still below headers
-                '&:hover': { backgroundColor: colorSet.hover,
-                 },
-                // Make it slightly narrower than availability blocks
-                width: 'calc(100% - 12px)',
-                left: '2px'
-            };
-        } else if (isUserAppointment) { return {
-                ...commonStyles,
-                backgroundColor: '#d4edda', // Light green color for user's booked appointments
-                border: '1px solid #c3e6cb',
+            switch(status) {
+                case 'pending':
+                    return {
+                        ...baseStyle,
+                        backgroundColor: '#fff3cd', // Light orange
+                        border: '1px solid #ffc107',
+                        color: '#856404',
+                    };
+                case 'confirmed':
+                    return {
+                        ...baseStyle,
+                        backgroundColor: '#d4edda', // Light green
+                        border: '1px solid #28a745',
                 color: '#155724',
-                cursor: 'default',
-                '&:hover': {
-                    backgroundColor: '#c3e6cb',
-                 }
-            };
-        } else if (mode === 'consumer') { return {
-                ...commonStyles,
-                backgroundColor: '#e3f2fd',
-                border: '1px solid #90caf9',
-                '&:hover': {
-                    backgroundColor: '#bbdefb',
-                    borderColor: '#1976d2',
-                 }
-            };
-        } else { return {
-                ...commonStyles,
-                backgroundColor: '#bbdefb',
-                '&:hover': {
-                    backgroundColor: '#90caf9',
-                 }
+                    };
+                case 'cancelled':
+                    return {
+                        ...baseStyle,
+                        backgroundColor: '#f8d7da', // Light red
+                        border: '1px solid #dc3545',
+                        color: '#721c24',
+                    };
+                case 'completed':
+                    return {
+                        ...baseStyle,
+                        backgroundColor: '#d1ecf1', // Light blue-green
+                        border: '1px solid #17a2b8',
+                        color: '#0c5460',
+                    };
+                default:
+                    return {
+                        ...baseStyle,
+                        backgroundColor: '#e3f2fd', // Light blue
+                        border: '1px solid #2196f3',
+                        color: '#0d47a1',
+                    };
+            }
+        }
+        
+        // Style for provider time blocks (when creating availability)
+        if (mode === 'provider') {
+            return {
+                ...baseStyle,
+                backgroundColor: '#e8f5e9', // Light green for provider availability blocks
+                border: '1px solid #4caf50',
+                color: '#1b5e20',
+                cursor: 'pointer', // Make it clear these are interactable
             };
         }
+        
+        // Check if the block has discount information
+        const hasDiscount = block.discount_percentage > 0;
+        
+        // Style for consumer available time slots
+        return {
+            ...baseStyle,
+            backgroundColor: hasDiscount ? '#fff8e1' : '#e3f2fd',  // Yellow for discounted, blue for regular
+            border: hasDiscount ? '1px solid #ffc107' : '1px solid #2196f3',
+            color: hasDiscount ? '#ff6f00' : '#0d47a1',
+            boxShadow: hasDiscount ? '0 0 4px rgba(255, 193, 7, 0.5)' : 'none',
+        };
     };
     
     // Handle provider appointment click
@@ -499,69 +774,257 @@ const AppointmentCalendar = forwardRef(({ mode,
          }
     };
     
-    // Handle cancellation of appointment
-    const handleCancelAppointment = async () => { if (!selectedAppointment) return;
+    // Function to update appointment status in local state to immediately reflect changes
+    const updateAppointmentStatus = useCallback((appointmentId, newStatus) => {
+        console.log(`Updating local appointment status: ${appointmentId} to ${newStatus}`);
+        
+        // Update in user appointments without affecting other appointments
+        setUserAppointments(prevAppointments => 
+            prevAppointments.map(appointment => 
+                appointment.id === appointmentId 
+                    ? { ...appointment, status: newStatus } 
+                    : appointment
+            )
+        );
+        
+        // Also update in provider appointments if relevant
+        if (mode === 'provider') {
+            setProviderAppointments(prevAppointments => 
+                prevAppointments.map(appointment => 
+                    appointment.id === appointmentId 
+                        ? { ...appointment, status: newStatus } 
+                        : appointment
+                )
+            );
+        }
+        
+        // Update the selectedAppointment state if it's the one being modified
+        if (selectedAppointment && selectedAppointment.id === appointmentId) {
+            setSelectedAppointment(prev => ({
+                ...prev,
+                status: newStatus
+            }));
+        }
+    }, [mode, selectedAppointment]);
+    
+    // Handle cancellation of appointment with better error handling and UI updates
+    const handleCancelAppointment = async () => { 
+        if (!selectedAppointment) {
+            console.error('No appointment selected for cancellation');
+            return;
+        }
         
         try {
             setCancelInProgress(true);
             setCancelError('');
             
-            console.log('Cancelling appointment');
+            // Log the appointment ID and full appointment object to help debug
+            console.log('Cancelling appointment with ID:', selectedAppointment.id);
             
-            // Call API to update appointment status
-            await appointmentsApi.updateStatus(selectedAppointment.id, 'cancelled');
-            console.log('Appointment cancelled successfully');
+            // Immediately update local UI state to show cancelled status
+            // This creates a better user experience by showing immediate feedback
+            updateAppointmentStatus(selectedAppointment.id, 'cancelled');
+            
+            // Use the appointmentsApi service directly
+            console.log('Calling updateStatus API with status "cancelled"');
+            
+            // UUID is already a string, no need to parse it
+            const appointmentId = selectedAppointment.id;
+            
+            // Make the API call in the background
+            const response = await appointmentsApi.updateStatus(appointmentId, 'cancelled');
+            console.log('Appointment cancelled successfully, response:', response.data);
             
             setCancelSuccess(true);
             setCancelInProgress(false);
             
-            // Refresh appointments after cancellation
-            await fetchUserAppointments();
-            
-            // If refreshing service availability is needed
-            if (serviceId) {
-                fetchServiceAvailability(serviceId);
-            }
+            // No need to immediately force refresh - the UI is already updated
+            // We'll do a background refresh to ensure data consistency
+            setTimeout(() => {
+                // Refresh data in the background without blocking UI
+                fetchUserAppointments(true).catch(err => 
+                    console.error('Background refresh of appointments failed:', err)
+                );
+                
+                // If in consumer mode, also refresh service availability
+                if (mode === 'consumer' && serviceId) {
+                    fetchServiceAvailability(true).catch(err => 
+                        console.error('Background refresh of availability failed:', err)
+                    );
+                }
+            }, 500);
             
             // Close modal after short delay
-            setTimeout(() => { setAppointmentDetailsOpen(false);
+            setTimeout(() => {
+                setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
-             }, 2000);
+            }, 1500);
             
-        } catch (err) { console.error('Error cancelling appointment');
-            setCancelError('Failed to cancel appointment. Please try again.');
+        } catch (error) {
+            console.error('Error cancelling appointment:', error);
+            
+            // If there was an error, revert the optimistic UI update
+            if (selectedAppointment) {
+                updateAppointmentStatus(selectedAppointment.id, selectedAppointment.status);
+            }
+            
+            let errorMessage = 'Failed to cancel appointment. Please try again.';
+            
+            // Add more detailed error message if available
+            if (error.response) {
+                console.error('Error response data:', error.response.data);
+                console.error('Status code:', error.response.status);
+                
+                if (error.response.status === 404) {
+                    // For 404 errors, provide a more helpful message
+                    errorMessage = `Appointment not found. It may have been already cancelled or deleted.`;
+                } else {
+                    errorMessage += ` (Status: ${error.response.status})`;
+                }
+                
+                // Try to extract a meaningful error message if available
+                if (error.response.data && typeof error.response.data === 'object') {
+                    const errorValues = Object.values(error.response.data).flat().join(', ');
+                    if (errorValues) {
+                        errorMessage += ` - ${errorValues}`;
+                    }
+                } else if (typeof error.response.data === 'string') {
+                    errorMessage += ` - ${error.response.data}`;
+                }
+            }
+            
+            setCancelError(errorMessage);
             setCancelInProgress(false);
-         }
+            
+            // Still attempt to refresh the data
+            try {
+                await fetchUserAppointments(true);
+            } catch (refreshError) {
+                console.error('Error refreshing appointments after cancel error:', refreshError);
+            }
+        }
     };
     
     // Handle status change for provider appointments
-    const handleStatusChange = async (newStatus) => { if (!selectedAppointment) return;
+    const handleStatusChange = async (newStatus) => { 
+        if (!selectedAppointment) {
+            console.error('No appointment selected for status change');
+            return;
+        }
         
         try {
             setCancelInProgress(true);
             setCancelError('');
             
-            console.log(`Updating appointment ${selectedAppointment.id } status to ${ newStatus }`);
+            console.log(`Updating appointment ${selectedAppointment.id} status to ${newStatus}`);
             
-            // Call API to update appointment status
-            await appointmentsApi.updateStatus(selectedAppointment.id, newStatus);
-            console.log('Appointment status updated successfully');
+            // Update UI immediately for better user experience
+            updateAppointmentStatus(selectedAppointment.id, newStatus);
+            
+            // Use the appointmentsApi service directly - it's already configured correctly
+            console.log(`Calling updateStatus API with status "${newStatus}"`);
+            // Use ID as is - it's a UUID string, no need for conversion
+            const response = await appointmentsApi.updateStatus(selectedAppointment.id, newStatus);
+            console.log('Appointment status updated successfully, response:', response.data);
             
             setCancelSuccess(true);
             setCancelInProgress(false);
             
-            // Refresh provider appointments
-            await fetchProviderAppointments();
+            // Refresh data in background after a delay
+            setTimeout(() => {
+                // Refresh in the background
+                if (mode === 'provider') {
+                    fetchProviderAppointments(true).catch(err => 
+                        console.error('Background refresh of provider appointments failed:', err)
+                    );
+                } else {
+                    fetchUserAppointments(true).catch(err => 
+                        console.error('Background refresh of user appointments failed:', err)
+                    );
+                }
+            }, 500);
             
             // Close modal after short delay
-            setTimeout(() => { setAppointmentDetailsOpen(false);
+            setTimeout(() => {
+                setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
-             }, 2000);
+            }, 1500);
             
-        } catch (err) { console.error('Error updating appointment status');
-            setCancelError(`Failed to update appointment status to ${newStatus }. Please try again.`);
+        } catch (error) {
+            console.error('Error updating appointment status:', error);
+            
+            // If there was an error, revert the optimistic UI update
+            if (selectedAppointment) {
+                updateAppointmentStatus(selectedAppointment.id, selectedAppointment.status);
+            }
+            
+            let errorMessage = `Failed to update appointment status to ${newStatus}. Please try again.`;
+            
+            // Add more detailed error message if available
+            if (error.response) {
+                console.error('Error response data:', error.response.data);
+                console.error('Status code:', error.response.status);
+                errorMessage += ` (Status: ${error.response.status})`;
+                
+                // Try to extract a meaningful error message if available
+                if (error.response.data && typeof error.response.data === 'object') {
+                    const errorValues = Object.values(error.response.data).flat().join(', ');
+                    if (errorValues) {
+                        errorMessage += ` - ${errorValues}`;
+                    }
+                }
+            }
+            
+            setCancelError(errorMessage);
             setCancelInProgress(false);
+            
+            // Still attempt to refresh the data
+            try {
+                if (mode === 'provider') {
+                    await fetchProviderAppointments(true);
+                } else {
+                    await fetchUserAppointments(true);
+                }
+            } catch (refreshError) {
+                console.error('Error refreshing appointments after status update error:', refreshError);
+            }
         }
+    };
+    
+    // Render a time block with price information
+    const renderTimeBlock = (block, day) => {
+        const startHour = format(new Date(block.start), 'h:mm a');
+        
+        // Check if block has discount
+        const hasDiscount = block.discount_percentage > 0;
+        
+        return (
+            <Box 
+                key={block.id} 
+                sx={getBlockStyle(block)}
+                onClick={(event) => handleBlockClick(block, event)}
+            >
+                <Box>
+                    <Typography variant="caption" fontWeight="bold" sx={{ fontSize: '0.7rem' }}>
+                        {startHour}
+                    </Typography>
+                </Box>
+                {hasDiscount ? (
+                    <Box sx={{ mt: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                        <Typography variant="caption" sx={{ fontSize: '0.65rem', textDecoration: 'line-through', color: 'text.secondary' }}>
+                            ${block.original_price}
+                        </Typography>
+                        <Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'warning.dark' }}>
+                            ${block.final_price} ({block.discount_percentage}% off)
+                        </Typography>
+                    </Box>
+                ) : (
+                    <Typography variant="caption" sx={{ mt: 'auto', fontSize: '0.7rem', fontWeight: 'bold', color: 'primary.main' }}>
+                        ${block.original_price}
+                    </Typography>
+                )}
+            </Box>
+        );
     };
     
     if (loading && Object.keys(timeBlocks).length === 0) { return (
@@ -720,7 +1183,10 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                     size="small" 
                                                     variant="contained" 
                                                     color="inherit"
-                                                    onClick={() => handleAddBlock(day) }
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleAddBlock(day);
+                                                    }}
                                                     sx={ { 
                                                         minWidth: 'auto',
                                                         p: '2px',
@@ -758,37 +1224,58 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                 />
                                             ))}
                                             
-                                            { /* Time blocks for available slots */ }
-                                            {getBlocksForDay(day).map((block) => (
+                                            { /* Time blocks for available slots - show in both provider and consumer modes */ }
+                                            {getBlocksForDay(day).map(block => {
+                                                if (mode === 'consumer') {
+                                                    return renderTimeBlock(block, day);
+                                                } else if (mode === 'provider') {
+                                                    // For provider mode, render blocks differently
+                                                    try {
+                                                        const blockStart = block.start instanceof Date ? block.start : new Date(block.start);
+                                                        const blockEnd = block.end instanceof Date ? block.end : new Date(block.end);
+                                                        
+                                                        // Format times for display
+                                                        const startHour = format(blockStart, 'h:mm a');
+                                                        const endHour = format(blockEnd, 'h:mm a');
+                                                        
+                                                        console.log(`Rendering provider block: ${startHour} - ${endHour}`);
+                                                        
+                                                        return (
                                                 <Box 
                                                     key={block.id} 
                                                     sx={getBlockStyle(block)}
-                                                    onClick={() => handleBlockClick(block)}
-                                                >
-                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center'   }}>
-                                                        <Typography variant="caption" fontWeight="bold" sx={{ fontSize: '0.7rem'   }}>
-                                                            {format(block.start, 'h:mm a')}
+                                                            >
+                                                                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                                    <Typography variant="caption" fontWeight="bold" sx={{ fontSize: '0.7rem' }}>
+                                                                        {startHour}
                                                         </Typography>
-                                                        {mode === 'consumer' && service && (
-                                                            <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'primary.main'   }}>
-                                                                ${service.price}
-                                                            </Typography>
-                                                        )}
-                                                        {mode === 'provider' && (
                                                             <IconButton 
                                                                 size="small"
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
                                                                     handleDeleteBlock(day, block.id);
                                                                  }}
-                                                                sx={{ p: 0, color: 'rgba(0, 0, 0, 0.5)'   }}
-                                                            >
-                                                                <DeleteIcon sx={{ fontSize: '0.9rem'   }} />
+                                                                        sx={{ 
+                                                                            p: 0, 
+                                                                            m: 0, 
+                                                                            '& svg': { fontSize: '0.8rem' }
+                                                                        }}
+                                                                    >
+                                                                        <DeleteIcon />
                                                             </IconButton>
-                                                        )}
                                                     </Box>
+                                                                <Typography variant="caption" sx={{ mt: 'auto', fontSize: '0.7rem' }}>
+                                                                    {endHour}
+                                                                </Typography>
                                                 </Box>
-                                            ))}
+                                                        );
+                                                    } catch (error) {
+                                                        console.error('Error rendering block:', error, block);
+                                                        return null;
+                                                    }
+                                                }
+                                                return null;
+                                            })}
 
                                             { /* Render existing user appointments in consumer mode */ }
                                             {mode === 'consumer' && getAppointmentsForDay(day).map((appointment) => {
@@ -804,7 +1291,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                     <Box 
                                                         key={apptBlock.id} 
                                                         sx={getBlockStyle(apptBlock, true)}
-                                                        onClick={() => handleAppointmentClick(appointment)}
+                                                        onClick={(e) => handleAppointmentClick(appointment)}
                                                     >
                                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', top: '-2px' }}>
                                                             <Typography variant="caption" fontWeight="bold" sx={{ fontSize: '0.7rem' }}>
@@ -819,15 +1306,20 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                                 {appointment.service.name}
                                                             </Typography>
                                                             <Chip 
-                                                                label={appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}
+                                                                label={
+                                                                    appointment.status 
+                                                                        ? appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)
+                                                                        : ""
+                                                                }
                                                                 size="small"
                                                                 color={appointment.status === 'confirmed' ? 'success' :
                                                                     appointment.status === 'pending' ? 'warning' :
-                                                                    appointment.status === 'cancelled' ? 'error' : 'default'
+                                                                    appointment.status === 'cancelled' ? 'error' : 'info'
                                                                 }
-                                                                sx={{ height: '16px', 
-                                                                    fontSize: '0.6rem',
-                                                                    maxWidth: '70%'
+                                                                sx={{ 
+                                                                    height: '20px', 
+                                                                    fontSize: '0.7rem',
+                                                                    mr: 2
                                                                 }}
                                                             />
                                                         </Box>
@@ -852,7 +1344,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                     >
                                                         <Box 
                                                             sx={getBlockStyle(apptBlock, false, appointment)}
-                                                            onClick={() => handleProviderAppointmentClick(appointment)}
+                                                            onClick={(e) => handleProviderAppointmentClick(appointment)}
                                                         >
                                                             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', top: '-2px' }}>
                                                                 <Typography variant="caption" fontWeight="bold" sx={{ fontSize: '0.7rem' }}>
@@ -868,15 +1360,19 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                                 </Typography>
                                                                 <Chip 
                                                                     label={
-                                                                        selectedAppointment?.status 
-                                                                            ? selectedAppointment.status.charAt(0).toUpperCase() + selectedAppointment.status.slice(1)
+                                                                        appointment.status 
+                                                                            ? appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)
                                                                             : ""
                                                                     }
                                                                     size="small"
+                                                                    color={appointment.status === 'confirmed' ? 'success' :
+                                                                        appointment.status === 'pending' ? 'warning' :
+                                                                        appointment.status === 'cancelled' ? 'error' : 'info'
+                                                                    }
                                                                     sx={{ 
-                                                                        height: '16px', 
-                                                                        fontSize: '0.6rem',
-                                                                        maxWidth: '70%'
+                                                                        height: '20px', 
+                                                                        fontSize: '0.7rem',
+                                                                        mr: 2
                                                                     }}
                                                                 />
                                                             </Box>
@@ -974,7 +1470,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 backgroundColor: '#e3f2fd', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #90caf9' 
+                                border: '1px solid #2196f3' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Available Slots
@@ -986,7 +1482,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 backgroundColor: '#d4edda', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #c3e6cb' 
+                                border: '1px solid #28a745' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Your Booked Appointments
@@ -1006,10 +1502,10 @@ const AppointmentCalendar = forwardRef(({ mode,
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                             <Box component="span" sx={{ width: 12, 
                                 height: 12, 
-                                backgroundColor: '#bbdefb', 
+                                backgroundColor: '#e8f5e9', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #90caf9' 
+                                border: '1px solid #4caf50' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Available Blocks
@@ -1021,7 +1517,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 backgroundColor: '#d4edda', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #c3e6cb' 
+                                border: '1px solid #28a745' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Confirmed
@@ -1033,7 +1529,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 backgroundColor: '#fff3cd', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #ffeeba' 
+                                border: '1px solid #ffc107' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Pending
@@ -1045,7 +1541,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 backgroundColor: '#f8d7da', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #f5c6cb' 
+                                border: '1px solid #dc3545' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Cancelled
@@ -1092,10 +1588,14 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                 : ""
                                         }
                                         size="small"
+                                        color={selectedAppointment?.status === 'confirmed' ? 'success' :
+                                            selectedAppointment?.status === 'pending' ? 'warning' :
+                                            selectedAppointment?.status === 'cancelled' ? 'error' : 'info'
+                                        }
                                         sx={{ 
-                                            height: '16px', 
-                                            fontSize: '0.6rem',
-                                            maxWidth: '70%'
+                                            height: '20px', 
+                                            fontSize: '0.7rem',
+                                            mr: 2
                                         }}
                                     />
                                     <Typography variant="body2">

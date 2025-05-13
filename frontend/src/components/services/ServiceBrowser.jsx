@@ -44,6 +44,14 @@ const ServiceBrowser = () => {
     const [bookingInProgress, setBookingInProgress] = useState(false);
 
     useEffect(() => {
+        // Check if user is logged in
+        const token = localStorage.getItem('token');
+        if (!token) {
+            // If not logged in, redirect to login page
+            navigate('/login', { replace: true });
+            return;
+        }
+        
         Promise.all([
             services.getCategories(),
             services.getAll()
@@ -61,11 +69,19 @@ const ServiceBrowser = () => {
             setLoading(false);
         })
         .catch(err => {
-            console.error('Error loading data');
-            setError('Failed to load services. Please try again later.');
-            setLoading(false);
+            console.error('Error loading data:', err);
+            
+            if (err.response && err.response.status === 401) {
+                // If unauthorized, redirect to login
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                navigate('/login', { replace: true });
+            } else {
+                setError('Failed to load services. Please try again later.');
+                setLoading(false);
+            }
         });
-    }, []);
+    }, [navigate]);
 
     // When a main category is selected, filter the subcategories
     const handleMainCategorySelect = (mainCategory) => {
@@ -99,10 +115,6 @@ const ServiceBrowser = () => {
         return categories.filter(cat => cat.value.startsWith(`${selectedMainCategory}_`));
     };
 
-    const handleBookService = (serviceId) => {
-        navigate(`/services/${serviceId}/book`);
-    };
-    
     // Handle time slot selection
     const handleBlockClick = (service, block) => {
         console.log('Selected service');

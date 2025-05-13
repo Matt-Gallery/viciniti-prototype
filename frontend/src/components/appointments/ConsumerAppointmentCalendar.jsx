@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { 
     Dialog,
     DialogTitle,
@@ -18,15 +18,16 @@ import { appointments, services } from '../../services/api';
 import AppointmentCalendar from '../common/AppointmentCalendar';
 
 
-const ConsumerAppointmentCalendar = ({ 
+const ConsumerAppointmentCalendar = forwardRef(({ 
     serviceId,
     daysToShow = 5,
+    location = null,
     onAppointmentBooked 
-}) => {
+}, ref) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [service, setService] = useState(null);
-    const calendarRef = useRef(null);
+    const innerCalendarRef = useRef(null);
     
     // State for booking dialog
     const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
@@ -36,24 +37,38 @@ const ConsumerAppointmentCalendar = ({
     const [bookingSuccess, setBookingSuccess] = useState(false);
     const [bookingInProgress, setBookingInProgress] = useState(false);
     
-    // Fetch service details
-    useEffect(() => {
-        const fetchServiceData = async () => {
-            try {
-                setLoading(true);
-                const serviceResponse = await services.getById(serviceId);
-                console.log('Service data loaded');
-                setService(serviceResponse.data);
-                setLoading(false);
-            } catch (error) {
-                console.error('Error fetching service');
-                setError('Unable to load service information. Please try again later.');
-                setLoading(false);
+    // Forward methods from the inner calendar ref to the parent
+    useImperativeHandle(ref, () => ({
+        fetchUserAppointments: async () => {
+            console.log('fetchUserAppointments called on ConsumerAppointmentCalendar');
+            if (innerCalendarRef.current && typeof innerCalendarRef.current.fetchUserAppointments === 'function') {
+                console.log('Delegating to inner calendar ref');
+                return innerCalendarRef.current.fetchUserAppointments();
             }
-        };
-        
+            console.warn('Inner calendar ref not available');
+            return [];
+        }
+    }));
+    
+    // Define fetchServiceData with useCallback to prevent recreation on every render
+    const fetchServiceData = useCallback(async () => {
+        try {
+            setLoading(true);
+            const serviceResponse = await services.getById(serviceId);
+            console.log('Service data loaded');
+            setService(serviceResponse.data);
+            setLoading(false);
+        } catch (error) {
+            console.error('Error fetching service');
+            setError('Unable to load service information. Please try again later.');
+            setLoading(false);
+        }
+    }, [serviceId, setLoading, setService, setError]);
+    
+    // Update the useEffect to use the new fetchServiceData function
+    useEffect(() => {
         fetchServiceData();
-    }, [serviceId]);
+    }, [fetchServiceData]);
     
     // Handle time slot selection
     const handleBlockClick = (block) => {
@@ -89,15 +104,34 @@ const ConsumerAppointmentCalendar = ({
         }));
     };
     
-    // Force refresh the calendar component to show updated appointments
-    const refreshCalendar = () => {
+    // Now update the refreshCalendar function to use the properly defined fetchServiceData
+    const refreshCalendar = async () => {
+        console.log('Refreshing calendar data after booking');
+        
         // If calendarRef.current exists and has a fetchUserAppointments method, call it
-        if (calendarRef.current && typeof calendarRef.current.fetchUserAppointments === 'function') {
-            calendarRef.current.fetchUserAppointments();
+        if (innerCalendarRef.current && typeof innerCalendarRef.current.fetchUserAppointments === 'function') {
+            try {
+                console.log('Calling calendar fetchUserAppointments method');
+                const result = await innerCalendarRef.current.fetchUserAppointments();
+                console.log('Calendar appointment refresh completed, found appointments:', result ? result.length : 0);
+                
+                // Now directly re-fetch service data rather than waiting
+                console.log('Re-fetching service data after appointment booking');
+                await fetchServiceData();
+                console.log('Service data refresh completed');
+                
+                return true;
+            } catch (error) {
+                console.error('Error refreshing calendar:', error);
+                throw error;
+            }
+        } else {
+            console.warn('Calendar ref or fetchUserAppointments method not available');
+            return false;
         }
     };
     
-    // Handle booking confirmation
+    // Handle booking confirmation with better synchronization of API calls and UI updates
     const handleConfirmBooking = async () => {
         if (!selectedSlot || !service) return;
         
@@ -111,7 +145,7 @@ const ConsumerAppointmentCalendar = ({
             setBookingInProgress(true);
             setBookingError('');
             
-            console.log('Creating appointment with slot');
+            console.log('Creating appointment with slot:', selectedSlot);
             console.log('Email being submitted:', bookingData.email);
             
             // Add the buffer time to the end time
@@ -120,37 +154,90 @@ const ConsumerAppointmentCalendar = ({
             // Create appointment request
             const appointmentData = {
                 service: parseInt(serviceId), // Make sure it's a number
-                start_time: selectedSlot.start.toISOString(),
-                end_time: appointmentEndTime.toISOString(),
-                status: 'confirmed',
+                start_time: selectedSlot.start instanceof Date ? selectedSlot.start.toISOString() : selectedSlot.start,
+                end_time: appointmentEndTime instanceof Date ? appointmentEndTime.toISOString() : appointmentEndTime,
+                status: 'pending',
                 notes: bookingData.notes || '',
                 client_email: bookingData.email, // This must be sent
                 client_phone: bookingData.phone || '',
                 client_address: bookingData.address || ''
             };
             
-            console.log('Sending appointment data', JSON.stringify(appointmentData));
+            // Add location information if available
+            if (location) {
+                appointmentData.latitude = location.latitude;
+                appointmentData.longitude = location.longitude;
+            }
+            
+            // Add pricing information if the slot has discount info
+            if (selectedSlot.discount_percentage > 0) {
+                appointmentData.original_price = selectedSlot.original_price;
+                appointmentData.final_price = selectedSlot.final_price;
+                appointmentData.discount_percentage = selectedSlot.discount_percentage;
+                appointmentData.discount_reason = `Proximity discount: ${selectedSlot.discount_percentage}% off for ${selectedSlot.nearby_appointments} nearby appointment(s)`;
+            }
+            
+            console.log('Sending appointment data:', JSON.stringify(appointmentData));
             
             // Call API to create appointment
             const response = await appointments.create(appointmentData);
-            console.log('Appointment created successfully', response.data);
+            console.log('Appointment created successfully:', response.data);
             
+            // Get the created appointment from the response
+            const createdAppointment = response.data;
+            
+            // Set success state and show the success modal view
             setBookingSuccess(true);
-            setBookingInProgress(false);
             
-            // Refresh appointments in the calendar
-            refreshCalendar();
-            
-            // After success, close dialog and refresh
-            setTimeout(() => {
-                setBookingDialogOpen(false);
+            // CRITICAL: Force calendar to refresh immediately after booking
+            // We use a try-catch but continue regardless of errors to ensure the booking success is shown
+            try {
+                console.log('Forcing immediate calendar refresh after booking success');
+                
+                // First force-refresh through the parent to get fresh data
                 if (onAppointmentBooked) {
-                    onAppointmentBooked();
+                    console.log('Notifying parent about new appointment for data refresh');
+                    // Delay slightly to allow API to reflect changes
+                    setTimeout(() => {
+                        onAppointmentBooked(createdAppointment);
+                    }, 300);
                 }
-            }, 2000);
-            
+                
+                // Then try multiple approaches to update the UI
+                setTimeout(async () => {
+                    try {
+                        console.log('Direct refresh via calendar ref');
+                        
+                        // Attempt 1: Try the calendar refresh method directly
+                        if (innerCalendarRef.current && 
+                            typeof innerCalendarRef.current.fetchUserAppointments === 'function') {
+                            await innerCalendarRef.current.fetchUserAppointments();
+                        }
+                        
+                        // Attempt 2: Try refreshing service data
+                        await fetchServiceData();
+                        
+                        console.log('All refresh attempts completed');
+                    } catch (refreshError) {
+                        console.error('Error refreshing calendar data:', refreshError);
+                    } finally {
+                        // Close the dialog regardless of refresh result
+                        setTimeout(() => {
+                            setBookingDialogOpen(false);
+                            setBookingInProgress(false);
+                        }, 1500);
+                    }
+                }, 500);
+            } catch (refreshError) {
+                console.error('Failed to refresh calendar:', refreshError);
+                // Still close the dialog after delay
+                setTimeout(() => {
+                    setBookingDialogOpen(false);
+                    setBookingInProgress(false);
+                }, 1500);
+            }
         } catch (error) {
-            console.error('Error creating appointment');
+            console.error('Error creating appointment:', error);
             
             // Handle conflict errors (HTTP 409)
             if (error.response && error.response.status === 409) {
@@ -172,8 +259,8 @@ const ConsumerAppointmentCalendar = ({
             
             setBookingInProgress(false);
             
-            // Also refresh the calendar to get the latest availability
-            refreshCalendar();
+            // Also refresh the calendar to get the latest availability even in error case
+            refreshCalendar().catch(e => console.error('Error refreshing calendar after booking error:', e));
         }
     };
     
@@ -201,17 +288,31 @@ const ConsumerAppointmentCalendar = ({
         );
     }
     
+    // Fix the getServiceAvailabilityUrl function
+    const getServiceAvailabilityUrl = () => {
+        if (!location || !location.latitude || !location.longitude) {
+            console.log('No location data available, using default service availability endpoint');
+            return null;
+        }
+        
+        // Construct full URL with location parameters
+        const url = `/services/${serviceId}/availability/?latitude=${location.latitude}&longitude=${location.longitude}`;
+        console.log('Using location-based availability URL:', url);
+        return url;
+    };
+    
     return (
         <>
             {service && (
                 <AppointmentCalendar
-                    ref={calendarRef}
+                    ref={innerCalendarRef}
                     mode="consumer"
                     serviceId={serviceId}
                     service={service}
                     daysToShow={daysToShow}
                     onBlockClick={handleBlockClick}
                     title={`Available Appointments for ${service.name}`}
+                    serviceAvailabilityUrl={getServiceAvailabilityUrl()}
                 />
             )}
             
@@ -228,7 +329,7 @@ const ConsumerAppointmentCalendar = ({
                                 Your appointment has been booked successfully!
                             </Typography>
                             <Typography variant="body1">
-                                {service.name} on {selectedSlot && format(selectedSlot.start, 'EEEE, MMMM d')} at {selectedSlot && format(selectedSlot.start, 'h:mm a')}
+                                {service.name} on {selectedSlot && format(new Date(selectedSlot.start), 'EEEE, MMMM d')} at {selectedSlot && format(new Date(selectedSlot.start), 'h:mm a')}
                             </Typography>
                         </Box>
                     ) : (
@@ -247,14 +348,34 @@ const ConsumerAppointmentCalendar = ({
                                     {service.name}
                                 </Typography>
                                 <Typography variant="body2">
-                                    {selectedSlot && format(selectedSlot.start, 'EEEE, MMMM d')} at {selectedSlot && format(selectedSlot.start, 'h:mm a')}
+                                    {selectedSlot && format(new Date(selectedSlot.start), 'EEEE, MMMM d')} at {selectedSlot && format(new Date(selectedSlot.start), 'h:mm a')}
                                 </Typography>
                                 <Typography variant="body2">
                                     Provider: {service.provider.business_name}
                                 </Typography>
-                                <Typography variant="body2" color="primary">
-                                    Price: ${service.price}
-                                </Typography>
+                                
+                                {/* Show price with discount if applicable */}
+                                {selectedSlot && selectedSlot.discount_percentage > 0 ? (
+                                    <Box sx={{ mt: 1 }}>
+                                        <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                                            Regular price: ${selectedSlot.original_price}
+                                        </Typography>
+                                        <Typography variant="body1" color="primary" fontWeight="bold">
+                                            Discounted price: ${selectedSlot.final_price} 
+                                            <Typography component="span" variant="body2" color="success.main" sx={{ ml: 1 }}>
+                                                (Save {selectedSlot.discount_percentage}%)
+                                            </Typography>
+                                        </Typography>
+                                        <Typography variant="body2" color="success.main" sx={{ fontSize: '0.8rem' }}>
+                                            Special discount for booking near {selectedSlot.nearby_appointments} existing appointment(s)!
+                                        </Typography>
+                                    </Box>
+                                ) : (
+                                    <Typography variant="body2" color="primary">
+                                        Price: ${service.price}
+                                    </Typography>
+                                )}
+                                
                                 <Typography variant="body2" color="text.secondary" sx={{ mt: 2, fontSize: '0.85rem', bgcolor: 'rgba(0, 0, 0, 0.03)', p: 1 }}>
                                     Duration: {service.duration} minutes
                                 </Typography>
@@ -339,6 +460,9 @@ const ConsumerAppointmentCalendar = ({
             </Dialog>
         </>
     );
-};
+});
+
+// Add display name for DevTools
+ConsumerAppointmentCalendar.displayName = 'ConsumerAppointmentCalendar';
 
 export default ConsumerAppointmentCalendar; 

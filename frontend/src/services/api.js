@@ -18,9 +18,72 @@ api.interceptors.request.use((config) => {
     if (token) {
         config.headers.Authorization = `Token ${token}`;
         console.log('Authorization header set:', config.headers.Authorization);
+    } else {
+        console.warn('No token available for request to:', config.url);
     }
     return config;
 });
+
+// Add response interceptor to help with auth errors
+api.interceptors.response.use(
+    (response) => {
+        // Successful response
+        return response;
+    },
+    (error) => {
+        // Handle error
+        if (error.response) {
+            console.error('API error response:', {
+                status: error.response.status,
+                data: error.response.data,
+                url: error.config.url
+            });
+            
+            // If 401 Unauthorized, the token might be invalid
+            if (error.response.status === 401) {
+                console.error('Authentication token expired or invalid');
+                // We don't automatically clear the token here, letting components handle this
+            }
+        } else if (error.request) {
+            console.error('API error (no response):', error.request);
+        } else {
+            console.error('API setup error:', error.message);
+        }
+        return Promise.reject(error);
+    }
+);
+
+// Create a non-authenticated axios instance for public endpoints
+const publicApi = axios.create({
+    baseURL: API_URL,
+    headers: {
+        'Content-Type': 'application/json',
+    },
+});
+
+// Also add interceptors to publicApi
+publicApi.interceptors.request.use((config) => {
+    console.log('Public API Request to:', config.url);
+    return config;
+});
+
+publicApi.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response) {
+            console.error('Public API error:', {
+                status: error.response.status,
+                data: error.response.data,
+                url: error.config.url
+            });
+        } else if (error.request) {
+            console.error('Public API error (no response):', error.request);
+        } else {
+            console.error('Public API setup error:', error.message);
+        }
+        return Promise.reject(error);
+    }
+);
 
 export const auth = {
     login: async (username, password) => {
@@ -60,8 +123,10 @@ export const auth = {
 };
 
 export const services = {
-    getAll: () => 
-        api.get('/services/'),
+    getAll: () => {
+        console.log('Getting all services (auth required)');
+        return api.get('/services/');
+    },
     
     getById: (id) =>
         api.get(`/services/${id}/`),
@@ -75,8 +140,10 @@ export const services = {
     delete: (id) =>
         api.delete(`/services/${id}/`),
     
-    getCategories: () =>
-        api.get('/services/categories/'),
+    getCategories: () => {
+        console.log('Getting service categories (auth required)');
+        return api.get('/services/categories/');
+    },
 };
 
 export const providers = {
@@ -135,8 +202,11 @@ export const appointments = {
     update: (id, appointmentData) =>
         api.put(`/appointments/${id}/`, appointmentData),
     
-    updateStatus: (id, status) =>
-        api.patch(`/appointments/${id}/status/`, { status }),
+    updateStatus: async (id, status) => {
+        console.log('Updating appointment status:', id, status);
+        // Backend now accepts UUID directly in the URL
+        return api.patch(`/appointments/${id}/status/`, { status });
+    },
     
     delete: (id) =>
         api.delete(`/appointments/${id}/`),
@@ -154,8 +224,15 @@ export const availability = {
     },
     
     // Get availability for a specific service (which includes provider info)
-    getForService: (serviceId) => {
+    getForService: (serviceId, customUrl = null) => {
         console.log('Getting availability for service:', serviceId);
+        
+        // If a custom URL with location params is provided, use it
+        if (customUrl) {
+            console.log('Using custom URL for availability:', customUrl);
+            return api.get(customUrl);
+        }
+        
         return api.get(`/services/${serviceId}/availability/`);
     },
     
@@ -171,6 +248,12 @@ export const availability = {
         console.log('Getting provider profile');
         return api.get('/provider/profile/');
     }
+};
+
+// Discount tiers management
+export const discountTiers = {
+    getAll: () => api.get('/discount-tiers/'),
+    create: (data) => api.post('/discount-tiers/', data),
 };
 
 // Export the configured axios instance for direct use
