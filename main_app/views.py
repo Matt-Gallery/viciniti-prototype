@@ -728,24 +728,53 @@ class ProviderAvailabilityAPI(APIView):
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ServiceAvailabilityAPI(APIView):
+    permission_classes = [AllowAny]  # Allow anyone to view availability
+
     def get(self, request, service_id):
-        """Get availability for a specific service"""
+        """Get availability for a specific service with accurate conflict detection"""
         try:
+            # Add debug logging
+            print(f"DEBUG AVAILABILITY: Calculating availability for service {service_id}")
+            
             from .models import Service, ProviderAvailability, Appointment
             # Check if service exists
             service = Service.objects.get(id=service_id)
             
             # Get provider associated with this service
             provider = service.provider
+            print(f"DEBUG AVAILABILITY: Found provider: {provider.business_name}")
             
-            # Get existing appointments for this service
+            # Get existing appointments for this provider (not just this service)
+            # This ensures we account for all provider commitments
             existing_appointments = Appointment.objects.filter(
-                service__provider=provider,  # Check for all appointments by this provider
-                status__in=['pending', 'confirmed', 'completed']
+                service__provider=provider,  # All provider appointments
+                status__in=['pending', 'confirmed', 'completed']  # Only active appointments
             )
+            
+            print(f"DEBUG AVAILABILITY: Found {existing_appointments.count()} existing appointments")
+            for appt in existing_appointments:
+                print(f"DEBUG AVAILABILITY: Existing appointment: {appt.service.name} - {appt.start_time} to {appt.end_time}")
+            
+            # Buffer time in minutes to add to both sides of appointments
+            buffer_minutes = 15
+            
+            # Create buffered time blocks for existing appointments
+            blocked_periods = []
+            for appointment in existing_appointments:
+                # Add buffer before and after the appointment
+                buffered_start = appointment.start_time - timezone.timedelta(minutes=buffer_minutes)
+                buffered_end = appointment.end_time + timezone.timedelta(minutes=buffer_minutes)
+                
+                blocked_periods.append({
+                    'start': buffered_start,
+                    'end': buffered_end,
+                    'original_appointment': appointment
+                })
+                print(f"DEBUG AVAILABILITY: Blocked period: {buffered_start} to {buffered_end} (from appointment {appointment.id})")
             
             # Get provider's availabilities
             availabilities = ProviderAvailability.objects.filter(provider=provider)
+            print(f"DEBUG AVAILABILITY: Found {availabilities.count()} availability blocks")
             
             # Organize availability by day
             availability_data = {}
@@ -760,23 +789,20 @@ class ServiceAvailabilityAPI(APIView):
                 
                 # Calculate how many service slots fit in this availability block
                 duration_minutes = service.duration
-                cushion_minutes = 15  # 15-minute cushion between appointments
-                
-                # First appointment doesn't need a cushion before it
-                slot_duration = duration_minutes
                 
                 # Calculate total block minutes available
                 block_minutes = (end_time - start_time).total_seconds() / 60
+                print(f"DEBUG AVAILABILITY: Block {day_key} from {start_time} to {end_time} ({block_minutes} minutes)")
                 
-                # Calculate slots
-                appointment_slots = []
+                # Calculate slots using service duration
+                available_slots = []
                 current_start = start_time
                 slot_index = 0
                 
                 # Loop until we can't fit another appointment
                 while True:
                     # Calculate end time for this slot
-                    current_end = current_start + timezone.timedelta(minutes=slot_duration)
+                    current_end = current_start + timezone.timedelta(minutes=duration_minutes)
                     
                     # If this slot would exceed the availability block, break
                     if current_end > end_time:
@@ -787,34 +813,38 @@ class ServiceAvailabilityAPI(APIView):
                         'id': f"slot-{day_key}-{slot_index}",
                         'start': current_start,
                         'end': current_end,
-                        'duration': slot_duration
+                        'duration': duration_minutes
                     }
                     
-                    # Check if slot overlaps with existing appointment
+                    # Check if slot overlaps with ANY buffered appointment block
                     is_available = True
-                    for appointment in existing_appointments:
-                        appt_start = appointment.start_time
-                        appt_end = appointment.end_time
-                        
-                        # Check if appointment overlaps with this slot
-                        if (slot['start'] < appt_end and slot['end'] > appt_start):
-                            # Log the conflict for debugging
-                            print(f"Slot {slot['id']} conflicts with appointment {appointment.id} " + 
-                                  f"({appointment.service.name} - {appointment.status}) " + 
-                                  f"at {appointment.start_time.isoformat()} - {appointment.end_time.isoformat()}")
+                    for blocked in blocked_periods:
+                        # Only check same day blocked periods
+                        block_date = blocked['start'].strftime('%Y-%m-%d')
+                        slot_date = current_start.strftime('%Y-%m-%d')
+                        if block_date != slot_date:
+                            continue
+                            
+                        # Check if this slot overlaps with the blocked period
+                        # (slot starts before blocked period ends AND slot ends after blocked period starts)
+                        if slot['start'] < blocked['end'] and slot['end'] > blocked['start']:
+                            print(f"DEBUG AVAILABILITY: Slot {slot['id']} at {slot['start']} conflicts with appointment {blocked['original_appointment'].id} " + 
+                                  f"({blocked['original_appointment'].service.name}) at {blocked['original_appointment'].start_time} - {blocked['original_appointment'].end_time} " +
+                                  f"[buffered: {blocked['start']} - {blocked['end']}]")
                             is_available = False
                             break
                     
                     if is_available:
-                        appointment_slots.append(slot)
+                        available_slots.append(slot)
+                        print(f"DEBUG AVAILABILITY: Added available slot: {slot['id']} at {slot['start']}")
                     
-                    # For subsequent slots, add cushion time
-                    # Move to the next slot start time (end of current + cushion)
+                    # Move to the next potential slot - add duration PLUS buffer time for spacing between slots
+                    # This ensures each appointment has buffer time on both sides
                     slot_index += 1
-                    current_start = current_end + timezone.timedelta(minutes=cushion_minutes)
-                    
+                    current_start = current_start + timezone.timedelta(minutes=duration_minutes + buffer_minutes)
+                
                 # Add valid slots to the output
-                for slot in appointment_slots:
+                for slot in available_slots:
                     availability_data[day_key].append({
                         'id': slot['id'],
                         'start': slot['start'].isoformat(),
@@ -827,6 +857,9 @@ class ServiceAvailabilityAPI(APIView):
                 'error': 'Service not found'
             }, http_status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            import traceback
+            print(f"DEBUG AVAILABILITY ERROR: {str(e)}")
+            traceback.print_exc()
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -940,16 +973,35 @@ class AppointmentListAPI(APIView):
             start_dt = parse_datetime(start_time) if isinstance(start_time, str) else start_time
             end_dt = parse_datetime(end_time) if isinstance(end_time, str) else end_time
             
+            # Apply buffer time (15 minutes) to requested appointment time for conflict detection
+            buffer_minutes = 15
+            # We need to use the buffered times for checking conflicts, but still create the appointment with original times
+            buffered_start = start_dt - timezone.timedelta(minutes=buffer_minutes)
+            buffered_end = end_dt + timezone.timedelta(minutes=buffer_minutes)
+            
+            print(f"DEBUG APPOINTMENT: Checking conflicts with buffered time {buffered_start} to {buffered_end}")
+            
             # Check for overlapping appointments with the same provider
             # Exclude cancelled appointments since they don't block the time slot
             overlapping_appointments = Appointment.objects.filter(
                 service__provider=service.provider,  # Same provider
                 status__in=['pending', 'confirmed', 'completed'],  # Active appointments
-                start_time__lt=end_dt,  # Start before this appointment ends
-                end_time__gt=start_dt,  # End after this appointment starts
-            )
+            ).exclude(status='cancelled')
             
-            if overlapping_appointments.exists():
+            # Check each appointment for overlap with the buffered time range
+            conflicts = []
+            for appt in overlapping_appointments:
+                # Add buffer around existing appointment
+                appt_buffered_start = appt.start_time - timezone.timedelta(minutes=buffer_minutes)
+                appt_buffered_end = appt.end_time + timezone.timedelta(minutes=buffer_minutes)
+                
+                # If appointment buffered time overlaps with our buffered time, it's a conflict
+                if appt_buffered_end > buffered_start and appt_buffered_start < buffered_end:
+                    conflicts.append(appt)
+                    print(f"DEBUG APPOINTMENT: Conflict with appointment {appt.id} from {appt.start_time} to {appt.end_time}")
+                    print(f"DEBUG APPOINTMENT: Conflict details: Buffered existing appt {appt_buffered_start} to {appt_buffered_end} overlaps with requested time {buffered_start} to {buffered_end}")
+            
+            if conflicts:
                 return Response({
                     'error': 'This time slot overlaps with an existing appointment. Please choose another time.',
                     'conflict_appointments': [
@@ -958,7 +1010,7 @@ class AppointmentListAPI(APIView):
                             'start_time': appt.start_time.isoformat(),
                             'end_time': appt.end_time.isoformat(),
                             'service': appt.service.name
-                        } for appt in overlapping_appointments[:3]  # Show up to 3 conflicts
+                        } for appt in conflicts[:3]  # Show up to 3 conflicts
                     ]
                 }, http_status.HTTP_409_CONFLICT)
             
@@ -991,7 +1043,7 @@ class AppointmentListAPI(APIView):
                     consumer.address = client_address
                 consumer.save()
             
-            # Create appointment
+            # Create appointment with original (non-buffered) times
             appointment = Appointment.objects.create(
                 service=service,
                 consumer=consumer,
@@ -1000,6 +1052,8 @@ class AppointmentListAPI(APIView):
                 notes=notes,
                 status=status
             )
+            
+            print(f"DEBUG APPOINTMENT: Created appointment {appointment.id} from {appointment.start_time} to {appointment.end_time}")
             
             return Response({
                 'id': appointment.id,
@@ -1083,16 +1137,29 @@ class AppointmentDetailAPI(APIView):
                 new_start_time = parse_datetime(start_time) if start_time and isinstance(start_time, str) else (start_time or appointment.start_time)
                 new_end_time = parse_datetime(end_time) if end_time and isinstance(end_time, str) else (end_time or appointment.end_time)
                 
+                # Apply buffer time for conflict detection
+                buffer_minutes = 15
+                buffered_start = new_start_time - timezone.timedelta(minutes=buffer_minutes)
+                buffered_end = new_end_time + timezone.timedelta(minutes=buffer_minutes)
+                
                 # Check for overlapping appointments with the same provider
-                # Exclude cancelled appointments and this appointment
                 overlapping_appointments = Appointment.objects.filter(
                     service__provider=appointment.service.provider,  # Same provider
                     status__in=['pending', 'confirmed', 'completed'],  # Active appointments
-                    start_time__lt=new_end_time,  # Start before this appointment ends
-                    end_time__gt=new_start_time,  # End after this appointment starts
-                ).exclude(id=appointment_id)  # Exclude this appointment
+                ).exclude(id=appointment_id).exclude(status='cancelled')  # Exclude this appointment and cancelled ones
                 
-                if overlapping_appointments.exists():
+                # Check each appointment for overlap with the buffered time range
+                conflicts = []
+                for appt in overlapping_appointments:
+                    # Add buffer around existing appointment
+                    appt_buffered_start = appt.start_time - timezone.timedelta(minutes=buffer_minutes)
+                    appt_buffered_end = appt.end_time + timezone.timedelta(minutes=buffer_minutes)
+                    
+                    # If appointment buffered time overlaps with our buffered time, it's a conflict
+                    if appt_buffered_end > buffered_start and appt_buffered_start < buffered_end:
+                        conflicts.append(appt)
+                
+                if conflicts:
                     return Response({
                         'error': 'This time slot overlaps with an existing appointment. Please choose another time.',
                         'conflict_appointments': [
@@ -1101,7 +1168,7 @@ class AppointmentDetailAPI(APIView):
                                 'start_time': appt.start_time.isoformat(),
                                 'end_time': appt.end_time.isoformat(),
                                 'service': appt.service.name
-                            } for appt in overlapping_appointments[:3]  # Show up to 3 conflicts
+                            } for appt in conflicts[:3]  # Show up to 3 conflicts
                         ]
                     }, http_status.HTTP_409_CONFLICT)
             
