@@ -20,10 +20,8 @@ import { format, addDays, areIntervalsOverlapping } from 'date-fns';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { availability as availabilityApi, appointments as appointmentsApi } from '../../services/api';
+import { availability as availabilityApi, appointments as appointmentsApi } from '../../services/api';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-
-
-// Define the ref handle type
 
 const AppointmentCalendar = forwardRef(({ mode,
     onBlockClick,
@@ -37,7 +35,7 @@ const AppointmentCalendar = forwardRef(({ mode,
     serviceAvailabilityUrl  // New prop for custom URL with location parameters
  }, ref) => { const [selectedDay, setSelectedDay] = useState(new Date());
     const [days, setDays] = useState([]);
-    const [timeBlocks, setTimeBlocks] = useState({ });
+    const [timeBlocks, setTimeBlocks] = useState({});
     const [userAppointments, setUserAppointments] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -116,9 +114,11 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Ensure all days in our view have entries (even if empty)
             days.forEach(day => {
                 const dateStr = format(day, 'yyyy-MM-dd');
+            days.forEach(day => {
+                const dateStr = format(day, 'yyyy-MM-dd');
                 if (!mergedAvailability[dateStr]) {
                     mergedAvailability[dateStr] = [];
-                 }
+                }
             });
             
             console.log('Setting time blocks with:', mergedAvailability);
@@ -419,7 +419,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (mode !== 'provider' || !providerId) {
             console.error('Cannot save availability in provider mode or providerId is missing');
             return;
-         }
+        }
         
         try { 
             setLoading(true);
@@ -475,7 +475,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             console.error('Error saving availability:', err);
             setError('Failed to save availability data');
             setLoading(false);
-         }
+        }
     };
     
     
@@ -486,10 +486,11 @@ const AppointmentCalendar = forwardRef(({ mode,
         setEndTime(null);
         setTimeError('');
         setDialogOpen(true);
-     };
+    };
     
-    const handleCloseDialog = () => { setDialogOpen(false);
-     };
+    const handleCloseDialog = () => {
+        setDialogOpen(false);
+    };
     
     const handleSaveTimeBlock = () => {
         if (mode !== 'provider') {
@@ -543,7 +544,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (hasOverlap) { 
             setTimeError('Time block overlaps with existing availability');
             return;
-         }
+        }
         
         const updatedBlocks = [...existingBlocks, newBlock].sort((a, b) => 
             a.start.getTime() - b.start.getTime()
@@ -551,7 +552,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         
         const newAvailability = { ...timeBlocks,
             [dateStr]: updatedBlocks
-         };
+        };
         
         console.log('Updated availability with new block');
         setTimeBlocks(newAvailability);
@@ -587,7 +588,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         const newAvailability = {
             ...timeBlocks,
             [dateStr]: updatedBlocks
-         };
+        };
         
         console.log('Setting new availability after deletion:', newAvailability);
         setTimeBlocks(newAvailability);
@@ -608,14 +609,15 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (mode === 'consumer' && onBlockClick) {
             console.log('Time block clicked for booking:', block);
             onBlockClick(block);
-         }
+        }
     };
     
     // Generate time slots for display
-    const generateTimeSlots = () => { const slots = [];
+    const generateTimeSlots = () => {
+        const slots = [];
         for (let hour = WORKING_HOURS_START; hour < WORKING_HOURS_END; hour++) {
             slots.push(hour);
-         }
+        }
         return slots;
     };
     
@@ -644,21 +646,23 @@ const AppointmentCalendar = forwardRef(({ mode,
      };
 
     // Get existing user appointments for a specific day
-    const getAppointmentsForDay = (day) => { const dateStr = format(day, 'yyyy-MM-dd');
+    const getAppointmentsForDay = (day) => {
+        const dateStr = format(day, 'yyyy-MM-dd');
         return userAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
-         });
+        });
     };
     
     // Get provider appointments for a specific day
-    const getProviderAppointmentsForDay = (day) => { if (mode !== 'provider') return [];
+    const getProviderAppointmentsForDay = (day) => {
+        if (mode !== 'provider') return [];
         
         const dateStr = format(day, 'yyyy-MM-dd');
         return providerAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
-         });
+        });
     };
     
     // Calculate position and height for a time block
@@ -757,21 +761,23 @@ const AppointmentCalendar = forwardRef(({ mode,
     };
     
     // Handle provider appointment click
-    const handleProviderAppointmentClick = (appointment) => { if (mode === 'provider') {
+    const handleProviderAppointmentClick = (appointment) => {
+        if (mode === 'provider') {
             setSelectedAppointment(appointment);
             setCancelError('');
             setCancelSuccess(false);
             setAppointmentDetailsOpen(true);
-         }
+        }
     };
     
     // Handle appointment click to show details
-    const handleAppointmentClick = (appointment) => { if (mode === 'consumer') {
+    const handleAppointmentClick = (appointment) => {
+        if (mode === 'consumer') {
             setSelectedAppointment(appointment);
             setCancelError('');
             setCancelSuccess(false);
             setAppointmentDetailsOpen(true);
-         }
+        }
     };
     
     // Function to update appointment status in local state to immediately reflect changes
@@ -857,6 +863,8 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Close modal after short delay
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
+            setTimeout(() => {
+                setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
             }, 1500);
             
@@ -917,6 +925,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             setCancelError('');
             
             console.log(`Updating appointment ${selectedAppointment.id} status to ${newStatus}`);
+            console.log(`Updating appointment ${selectedAppointment.id} status to ${newStatus}`);
             
             // Update UI immediately for better user experience
             updateAppointmentStatus(selectedAppointment.id, newStatus);
@@ -945,6 +954,8 @@ const AppointmentCalendar = forwardRef(({ mode,
             }, 500);
             
             // Close modal after short delay
+            setTimeout(() => {
+                setAppointmentDetailsOpen(false);
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
@@ -1032,7 +1043,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 <CircularProgress />
             </Box>
         );
-     }
+    }
     
     return (
         <Box sx={{ 
@@ -1048,13 +1059,13 @@ const AppointmentCalendar = forwardRef(({ mode,
             mr: 0,
         }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                {/* Only show title if we're in provider mode or no service is provided */}
+                // Only show title if we're in provider mode or no service is provided
                 {(mode === 'provider' || !service) && (
                     <Typography variant="h6" sx={{ fontSize: '1rem' }}>
                         {title || (mode === 'provider' ? 'Your Availability' : '')}
                     </Typography>
                 )}
-                {/* Empty space div to maintain layout when title is hidden */}
+                // Empty space div to maintain layout when title is hidden
                 {mode === 'consumer' && service && (
                     <div></div>
                 )}
@@ -1070,13 +1081,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                     </Button>
                 )}
             </Box>
-            { error && (
+            {error && (
                 <Alert severity="error" sx={{ mb: 2, py: 1, fontSize: '0.75rem' }}>
-                    { error }
+                    {error}
                 </Alert>
             )}
             
-            { saveSuccess && (
+            {saveSuccess && (
                 <Alert severity="success" sx={{ mb: 2, py: 1, fontSize: '0.75rem' }}>
                     Availability saved successfully
                 </Alert>
@@ -1090,7 +1101,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                     overflow: 'hidden',
                     width: '100%',
                     position: 'relative'
-                  }}>
+                }}>
                     { /* Scrollable area containing time labels and day columns */ }
                     <Box sx={{ display: 'flex', 
                         flexDirection: 'row',
@@ -1098,7 +1109,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                         height: '400px',
                         overflow: 'auto',
                         position: 'relative'
-                      }}>
+                    }}>
                         { /* Time labels column - inside the scrollable area */ }
                         <Box sx={{ width: '30px', flexShrink: 0, position: 'sticky', left: 0, zIndex: 5, bgcolor: '#f5f5f5'   }}>
                             { /* Day header placeholder to align with day columns */ }
@@ -1118,7 +1129,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 position: 'relative',
                                 zIndex: 10 /* Lower z-index so it scrolls behind the header */
                             }}>
-                                { timeSlots.map((hour) => (
+                                {timeSlots.map((hour) => (
                                     <Box 
                                         key={hour } 
                                         sx={{ 
@@ -1129,10 +1140,10 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             pr: 1,
                                             borderTop: '1px solid #ddd',
                                             bgcolor: '#f5f5f5'
-                                          }}
+                                        }}
                                     >
                                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', pt: 1   }}>
-                                            { format(new Date().setHours(hour, 0, 0), 'h a') }
+                                            {format(new Date().setHours(hour, 0, 0), 'h a')}
                                         </Typography>
                                     </Box>
                                 ))}
@@ -1174,11 +1185,11 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             height: '39px',
                                             borderBottom: '2px solid rgba(255, 255, 255, 0.2)', // Add bottom border to day header
                                             boxShadow: '0 2px 4px rgba(0,0,0,0.1)' // Add subtle shadow for depth
-                                          }}>
+                                        }}>
                                             <Typography variant="subtitle2" fontWeight="bold" sx={{ fontSize: '0.8rem'   }}>
-                                                { format(day, 'EEE, MMM d') }
+                                                {format(day, 'EEE, MMM d')}
                                             </Typography>
-                                            { mode === 'provider' && (
+                                            {mode === 'provider' && (
                                                 <Button 
                                                     size="small" 
                                                     variant="contained" 
@@ -1220,7 +1231,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                         borderTop: '1px solid #ddd',
                                                         height: HOUR_HEIGHT,
                                                         zIndex: 1,
-                                                      }}
+                                                    }}
                                                 />
                                             ))}
                                             
@@ -1417,13 +1428,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             const newTime = new Date();
                                             newTime.setHours(Number(hours), Number(minutes));
                                             setStartTime(newTime);
-                                         }}
+                                        }}
                                         InputLabelProps={{
                                             shrink: true,
-                                         }}
+                                        }}
                                         inputProps={{
                                             step: 300, // 5 min
-                                         }}
+                                        }}
                                     />
                                 </Box>
                                 <Box sx={{ flex: 1 }}>
@@ -1437,13 +1448,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             const newTime = new Date();
                                             newTime.setHours(Number(hours), Number(minutes));
                                             setEndTime(newTime);
-                                         }}
+                                        }}
                                         InputLabelProps={{
                                             shrink: true,
-                                         }}
+                                        }}
                                         inputProps={{
                                             step: 300, // 5 min
-                                         }}
+                                        }}
                                     />
                                 </Box>
                             </Box>
@@ -1614,7 +1625,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                         Client Information
                                     </Typography>
                                     <Typography variant="body1">
-                                        {selectedAppointment?.consumer?.email || ""}
+                                        {selectedAppointment?.consumer?.username || selectedAppointment?.consumer?.email || "Anonymous"}
                                     </Typography>
                                     {selectedAppointment?.consumer?.phone_number && (
                                         <Typography variant="body2">
