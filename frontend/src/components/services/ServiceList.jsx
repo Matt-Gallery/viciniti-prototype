@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Box,
@@ -11,28 +11,60 @@ import {
     Alert,
 } from '@mui/material';
 import { services } from '../../services/api';
+import { api } from '../../services/api';
 
 const ServiceList = () => {
     const navigate = useNavigate();
     const [serviceList, setServiceList] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
+    const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const [userType, setUserType] = useState(null);
+    const [isInitialized, setIsInitialized] = useState(false);
 
-    useEffect(() => {
-        fetchServices();
-    }, []);
-
-    const fetchServices = async () => {
+    const fetchServices = useCallback(async () => {
+        if (!isInitialized) return;
+        
+        setLoading(true);
         try {
             const response = await services.getAll();
             setServiceList(response.data);
-            setLoading(false);
-        } catch (err) {
+            setError(null);
+        } catch (error) {
+            console.error('Error fetching services:', error);
             setError('Failed to load services');
+        } finally {
             setLoading(false);
         }
-    };
+    }, [isInitialized]);
+
+    useEffect(() => {
+        const initializeUserData = async () => {
+            try {
+                const userStr = localStorage.getItem('user');
+                if (userStr) {
+                    const userData = JSON.parse(userStr);
+                    setUserType(userData.user_type);
+                    
+                    if (userData.user_type === 'provider' && !userData.provider_profile) {
+                        // Fetch provider profile if not available
+                        await api.get('/provider/profile/');
+                    }
+                }
+                setIsInitialized(true);
+            } catch (error) {
+                console.error('Error initializing user data:', error);
+                setError('Failed to load user data');
+                setIsInitialized(true);
+            }
+        };
+
+        initializeUserData();
+    }, []);
+
+    useEffect(() => {
+        fetchServices();
+    }, [fetchServices]);
 
     const handleBooking = (serviceId) => {
         navigate(`/services/${serviceId}/book`);
@@ -54,7 +86,7 @@ const ServiceList = () => {
     return (
         <Box>
             <Typography variant="h4" gutterBottom>
-                Available Services
+                {userType === 'provider' ? 'My Services' : 'Available Services'}
             </Typography>
             <TextField
                 fullWidth
@@ -88,17 +120,21 @@ const ServiceList = () => {
                                 <Typography variant="body1" gutterBottom>
                                     Price: ${service.price}
                                 </Typography>
-                                <Typography variant="body2" color="text.secondary" gutterBottom>
-                                    Provider: {service.provider.business_name}
-                                </Typography>
-                                <Button
-                                    variant="contained"
-                                    color="primary"
-                                    fullWidth
-                                    onClick={() => handleBooking(service.id)}
-                                >
-                                    Book Now
-                                </Button>
+                                {userType !== 'provider' && service.provider && (
+                                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                                        Provider: {service.provider.business_name}
+                                    </Typography>
+                                )}
+                                {userType !== 'provider' && (
+                                    <Button
+                                        variant="contained"
+                                        color="primary"
+                                        fullWidth
+                                        onClick={() => handleBooking(service.id)}
+                                    >
+                                        Book Now
+                                    </Button>
+                                )}
                             </CardContent>
                         </Card>
                     </Box>

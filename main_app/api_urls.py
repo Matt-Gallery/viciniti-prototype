@@ -24,10 +24,13 @@ urlpatterns = [
     path('services/<int:service_id>/', views.ServiceDetailAPI.as_view(), name='api_service_detail'),
     path('services/categories/', views.ServiceCategoriesAPI.as_view(), name='api_service_categories'),
     path('services/create/', views.ServiceCreateAPI.as_view(), name='api_service_create'),
+    path('services/provider/<int:provider_id>/', views.ProviderServiceListAPI.as_view(), name='api_provider_services'),
     path('services/<int:service_id>/availability/', views.ServiceAvailabilityAPI.as_view(), name='api_service_availability'),
     
     # Appointment endpoints
     path('appointments/', views.AppointmentListAPI.as_view(), name='api_appointment_list'),
     path('appointments/<int:appointment_id>/', views.AppointmentDetailAPI.as_view(), name='api_appointment_detail'),
     path('appointments/<int:appointment_id>/status/', views.AppointmentStatusAPI.as_view(), name='api_appointment_status'),
+    path('appointments/provider/<int:provider_id>/', views.ProviderAppointmentListAPI.as_view(), name='api_provider_appointments'),
+    path('appointments/consumer/<int:consumer_id>/', views.ConsumerAppointmentListAPI.as_view(), name='api_consumer_appointments'),
 ] 

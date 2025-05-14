@@ -865,195 +865,147 @@ class ServiceAvailabilityAPI(APIView):
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class AppointmentListAPI(APIView):
-    permission_classes = [AllowAny]  # Allow anyone to create appointments
-    authentication_classes = []  # No authentication needed for appointment creation
+    permission_classes = [IsAuthenticated]
     
     def get(self, request):
         """Get all appointments for the authenticated user or provider"""
-        # Get appointments based on user type
-        if request.user.is_authenticated and request.user.user_type == 'provider':
-            # Providers see appointments for their services
-            appointments = Appointment.objects.filter(
-                service__provider__user=request.user
-            ).order_by('start_time')
-        elif request.user.is_authenticated:
-            # Consumers see their own appointments
-            appointments = Appointment.objects.filter(
-                consumer=request.user
-            ).order_by('start_time')
-        else:
-            # For testing/debugging, return all appointments for unauthenticated users
-            print("WARNING: Returning all appointments for unauthenticated request")
-            appointments = Appointment.objects.all().order_by('start_time')
-        
-        # Serialize appointments
-        appointment_list = []
-        for appointment in appointments:
-            appointment_list.append({
-                'id': appointment.id,
-                'service': {
-                    'id': appointment.service.id,
-                    'name': appointment.service.name,
-                    'duration': appointment.service.duration,
-                    'price': float(appointment.service.price),
-                    'provider': {
-                        'id': appointment.service.provider.id,
-                        'business_name': appointment.service.provider.business_name
-                    }
-                },
-                'consumer': {
-                    'id': appointment.consumer.id,
-                    'username': appointment.consumer.username,
-                    'email': appointment.consumer.email
-                },
-                'start_time': appointment.start_time.isoformat(),
-                'end_time': appointment.end_time.isoformat(),
-                'status': appointment.status,
-                'notes': appointment.notes,
-                'created_at': appointment.created_at.isoformat(),
-                'updated_at': appointment.updated_at.isoformat()
-            })
-        
-        return Response(appointment_list)
+        try:
+            # Get appointments based on user type
+            if request.user.user_type == 'provider':
+                # Providers see appointments for their services
+                appointments = Appointment.objects.filter(
+                    service__provider__user=request.user
+                ).order_by('start_time')
+            else:
+                # Consumers see their own appointments
+                appointments = Appointment.objects.filter(
+                    consumer=request.user
+                ).order_by('start_time')
+            
+            # Serialize appointments
+            appointment_list = []
+            for appointment in appointments:
+                appointment_list.append({
+                    'id': appointment.id,
+                    'service': {
+                        'id': appointment.service.id,
+                        'name': appointment.service.name,
+                        'duration': appointment.service.duration,
+                        'price': float(appointment.service.price),
+                        'provider': {
+                            'id': appointment.service.provider.id,
+                            'business_name': appointment.service.provider.business_name
+                        }
+                    },
+                    'consumer': {
+                        'id': appointment.consumer.id,
+                        'username': appointment.consumer.username,
+                        'email': appointment.consumer.email
+                    },
+                    'start_time': appointment.start_time.isoformat(),
+                    'end_time': appointment.end_time.isoformat(),
+                    'status': appointment.status,
+                    'notes': appointment.notes,
+                    'created_at': appointment.created_at.isoformat(),
+                    'updated_at': appointment.updated_at.isoformat()
+                })
+            
+            return Response(appointment_list)
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def post(self, request):
-        """Create a new appointment - for testing, we'll allow anonymous appointments"""
-        # Debug logging
-        print("DEBUG APPOINTMENT: Starting appointment creation")
-        print(f"DEBUG APPOINTMENT: Request data: {request.data}")
-        
-        # Extract data
-        service_data = request.data.get('service')
-        # Handle service in various formats (integer ID, string ID, or object)
-        if isinstance(service_data, dict) and 'id' in service_data:
-            # If service is an object with an id field, extract the id
-            service_id = service_data['id']
-            print(f"DEBUG APPOINTMENT: Extracted service ID from object: {service_id}")
-        else:
-            # Use service data directly (could be int or string)
-            service_id = service_data
+        """Create a new appointment"""
+        try:
+            # Debug logging
+            print("DEBUG APPOINTMENT: Starting appointment creation")
+            print(f"DEBUG APPOINTMENT: Request data: {request.data}")
             
-        # Ensure service_id is an integer
-        try:
-            service_id = int(service_id)
-        except (TypeError, ValueError):
-            print(f"DEBUG APPOINTMENT: Invalid service ID: {service_id}")
-            return Response({
-                'error': f'Invalid service ID: {service_id}'
-            }, http_status.HTTP_400_BAD_REQUEST)
-        
-        start_time = request.data.get('start_time')
-        end_time = request.data.get('end_time')
-        notes = request.data.get('notes', '')
-        status = request.data.get('status', 'pending')  # Default to pending if not provided
-        client_email = request.data.get('client_email', 'test@example.com')  # Default to test email for testing
-        client_phone = request.data.get('client_phone', '')
-        client_address = request.data.get('client_address', '')
-        
-        print(f"DEBUG APPOINTMENT: Extracted data - service_id={service_id}, start_time={start_time}, client_email={client_email}")
-        
-        # FOR TESTING: Don't require email or authentication
-        # if not client_email and not request.user.is_authenticated:
-        #     print("DEBUG APPOINTMENT: No client email and not authenticated")
-        #     return Response({
-        #         'error': 'Either authentication or client_email is required'
-        #     }, http_status.HTTP_401_UNAUTHORIZED)
-        
-        # If client_email is missing but user is authenticated, use user's email
-        if not client_email and request.user.is_authenticated:
-            client_email = request.user.email
-            print(f"DEBUG APPOINTMENT: Using authenticated user email: {client_email}")
-        
-        try:
+            # Extract data
+            service_data = request.data.get('service')
+            if isinstance(service_data, dict) and 'id' in service_data:
+                service_id = service_data['id']
+            else:
+                service_id = service_data
+                
+            try:
+                service_id = int(service_id)
+            except (TypeError, ValueError):
+                return Response({
+                    'error': f'Invalid service ID: {service_id}'
+                }, http_status.HTTP_400_BAD_REQUEST)
+            
+            start_time = request.data.get('start_time')
+            end_time = request.data.get('end_time')
+            notes = request.data.get('notes', '')
+            status = request.data.get('status', 'pending')
+            
             # Get service
-            from .models import Service, User
             service = Service.objects.get(id=service_id)
             
-            # Convert string times to datetime objects for overlap check
+            # Convert string times to datetime objects
             start_dt = parse_datetime(start_time) if isinstance(start_time, str) else start_time
             end_dt = parse_datetime(end_time) if isinstance(end_time, str) else end_time
             
-            # Apply buffer time (15 minutes) to requested appointment time for conflict detection
+            # Apply buffer time for conflict detection
             buffer_minutes = 15
-            # We need to use the buffered times for checking conflicts, but still create the appointment with original times
             buffered_start = start_dt - timezone.timedelta(minutes=buffer_minutes)
             buffered_end = end_dt + timezone.timedelta(minutes=buffer_minutes)
             
-            print(f"DEBUG APPOINTMENT: Checking conflicts with buffered time {buffered_start} to {buffered_end}")
+            print(f"DEBUG APPOINTMENT: Checking conflicts for time range {start_dt} to {end_dt}")
+            print(f"DEBUG APPOINTMENT: With buffer: {buffered_start} to {buffered_end}")
             
-            # Check for overlapping appointments with the same provider
-            # Exclude cancelled appointments since they don't block the time slot
+            # Check for overlapping appointments
             overlapping_appointments = Appointment.objects.filter(
-                service__provider=service.provider,  # Same provider
-                status__in=['pending', 'confirmed', 'completed'],  # Active appointments
+                service__provider=service.provider,
+                status__in=['pending', 'confirmed', 'completed'],
             ).exclude(status='cancelled')
             
-            # Check each appointment for overlap with the buffered time range
+            print(f"DEBUG APPOINTMENT: Found {overlapping_appointments.count()} potential conflicts")
+            
             conflicts = []
             for appt in overlapping_appointments:
-                # Add buffer around existing appointment
                 appt_buffered_start = appt.start_time - timezone.timedelta(minutes=buffer_minutes)
                 appt_buffered_end = appt.end_time + timezone.timedelta(minutes=buffer_minutes)
                 
-                # If appointment buffered time overlaps with our buffered time, it's a conflict
-                if appt_buffered_end > buffered_start and appt_buffered_start < buffered_end:
+                print(f"DEBUG APPOINTMENT: Checking against appointment {appt.id}:")
+                print(f"  - Original time: {appt.start_time} to {appt.end_time}")
+                print(f"  - Buffered time: {appt_buffered_start} to {appt_buffered_end}")
+                
+                # Check if there's any overlap
+                if (start_dt < appt_buffered_end and end_dt > appt_buffered_start):
                     conflicts.append(appt)
-                    print(f"DEBUG APPOINTMENT: Conflict with appointment {appt.id} from {appt.start_time} to {appt.end_time}")
-                    print(f"DEBUG APPOINTMENT: Conflict details: Buffered existing appt {appt_buffered_start} to {appt_buffered_end} overlaps with requested time {buffered_start} to {buffered_end}")
+                    print(f"DEBUG APPOINTMENT: Found conflict with appointment {appt.id}")
             
             if conflicts:
+                conflict_details = []
+                for appt in conflicts:
+                    conflict_details.append({
+                        'id': appt.id,
+                        'start_time': appt.start_time.isoformat(),
+                        'end_time': appt.end_time.isoformat(),
+                        'service': appt.service.name,
+                        'status': appt.status
+                    })
+                
                 return Response({
                     'error': 'This time slot overlaps with an existing appointment. Please choose another time.',
-                    'conflict_appointments': [
-                        {
-                            'id': appt.id,
-                            'start_time': appt.start_time.isoformat(),
-                            'end_time': appt.end_time.isoformat(),
-                            'service': appt.service.name
-                        } for appt in conflicts[:3]  # Show up to 3 conflicts
-                    ]
+                    'conflict_appointments': conflict_details
                 }, http_status.HTTP_409_CONFLICT)
             
-            # Determine the consumer for this appointment
-            consumer = None
-            if request.user.is_authenticated:
-                consumer = request.user
-            else:
-                # For non-authenticated users, we need an email
-                # Check if a user with this email already exists
-                try:
-                    consumer = User.objects.get(email=client_email)
-                except User.DoesNotExist:
-                    # Create a temporary user with just an email
-                    from django.contrib.auth.models import User as AuthUser
-                    random_username = f"guest_{client_email.split('@')[0]}_{User.objects.count() + 1}"
-                    consumer = User.objects.create(
-                        username=random_username,
-                        email=client_email,
-                        user_type='consumer',
-                        phone_number=client_phone,
-                        address=client_address
-                    )
-            
-            # Update user details if provided and user exists
-            if consumer and (client_phone or client_address):
-                if client_phone and not consumer.phone_number:
-                    consumer.phone_number = client_phone
-                if client_address and not consumer.address:
-                    consumer.address = client_address
-                consumer.save()
-            
-            # Create appointment with original (non-buffered) times
+            # Create appointment
             appointment = Appointment.objects.create(
                 service=service,
-                consumer=consumer,
+                consumer=request.user,
                 start_time=start_time,
                 end_time=end_time,
                 notes=notes,
                 status=status
             )
             
-            print(f"DEBUG APPOINTMENT: Created appointment {appointment.id} from {appointment.start_time} to {appointment.end_time}")
+            print(f"DEBUG APPOINTMENT: Successfully created appointment {appointment.id}")
             
             return Response({
                 'id': appointment.id,
@@ -1066,6 +1018,7 @@ class AppointmentListAPI(APIView):
                 'status': appointment.status,
                 'notes': appointment.notes
             }, http_status.HTTP_201_CREATED)
+            
         except Service.DoesNotExist:
             return Response({
                 'error': 'Service not found'
@@ -1255,6 +1208,154 @@ class AppointmentStatusAPI(APIView):
                 'status': appointment.status
             })
         except Exception as e:
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ProviderAppointmentListAPI(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, provider_id):
+        """Get all appointments for a specific provider"""
+        try:
+            # Verify the provider exists and belongs to the authenticated user
+            provider = ServiceProvider.objects.get(id=provider_id)
+            if provider.user != request.user:
+                return Response({
+                    'error': 'You do not have permission to view these appointments'
+                }, http_status.HTTP_403_FORBIDDEN)
+            
+            # Get appointments for this provider's services
+            appointments = Appointment.objects.filter(
+                service__provider=provider
+            ).order_by('start_time')
+            
+            # Serialize appointments
+            appointment_list = []
+            for appointment in appointments:
+                appointment_list.append({
+                    'id': appointment.id,
+                    'service': {
+                        'id': appointment.service.id,
+                        'name': appointment.service.name,
+                        'duration': appointment.service.duration,
+                        'price': float(appointment.service.price),
+                        'provider': {
+                            'id': appointment.service.provider.id,
+                            'business_name': appointment.service.provider.business_name
+                        }
+                    },
+                    'consumer': {
+                        'id': appointment.consumer.id,
+                        'username': appointment.consumer.username,
+                        'email': appointment.consumer.email
+                    },
+                    'start_time': appointment.start_time.isoformat(),
+                    'end_time': appointment.end_time.isoformat(),
+                    'status': appointment.status,
+                    'notes': appointment.notes,
+                    'created_at': appointment.created_at.isoformat(),
+                    'updated_at': appointment.updated_at.isoformat()
+                })
+            
+            return Response(appointment_list)
+        except ServiceProvider.DoesNotExist:
+            return Response({
+                'error': 'Provider not found'
+            }, http_status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ConsumerAppointmentListAPI(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, consumer_id):
+        """Get all appointments for a specific consumer"""
+        try:
+            # Verify the consumer exists and is the authenticated user
+            consumer = User.objects.get(id=consumer_id)
+            if consumer != request.user:
+                return Response({
+                    'error': 'You do not have permission to view these appointments'
+                }, http_status.HTTP_403_FORBIDDEN)
+            
+            # Get appointments for this consumer
+            appointments = Appointment.objects.filter(
+                consumer=consumer
+            ).order_by('start_time')
+            
+            # Serialize appointments
+            appointment_list = []
+            for appointment in appointments:
+                appointment_list.append({
+                    'id': appointment.id,
+                    'service': {
+                        'id': appointment.service.id,
+                        'name': appointment.service.name,
+                        'duration': appointment.service.duration,
+                        'price': float(appointment.service.price),
+                        'provider': {
+                            'id': appointment.service.provider.id,
+                            'business_name': appointment.service.provider.business_name
+                        }
+                    },
+                    'consumer': {
+                        'id': appointment.consumer.id,
+                        'username': appointment.consumer.username,
+                        'email': appointment.consumer.email
+                    },
+                    'start_time': appointment.start_time.isoformat(),
+                    'end_time': appointment.end_time.isoformat(),
+                    'status': appointment.status,
+                    'notes': appointment.notes,
+                    'created_at': appointment.created_at.isoformat(),
+                    'updated_at': appointment.updated_at.isoformat()
+                })
+            
+            return Response(appointment_list)
+        except User.DoesNotExist:
+            return Response({
+                'error': 'Consumer not found'
+            }, http_status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ProviderServiceListAPI(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, provider_id):
+        """Get all services for a specific provider"""
+        try:
+            # Get services for this provider
+            services = Service.objects.filter(
+                provider_id=provider_id,
+                is_active=True
+            )
+            
+            # Serialize services
+            service_list = []
+            for service in services:
+                service_list.append({
+                    'id': service.id,
+                    'name': service.name,
+                    'description': service.description,
+                    'price': float(service.price),
+                    'duration': service.duration,
+                    'category': service.category,
+                    'provider': {
+                        'id': service.provider.id,
+                        'business_name': service.provider.business_name,
+                        'business_description': service.provider.business_description,
+                    }
+                })
+            
+            return Response(service_list)
+        except Exception as e:
+            print(f"Error in ProviderServiceListAPI: {str(e)}")
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)

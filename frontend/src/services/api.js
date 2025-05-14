@@ -60,8 +60,40 @@ export const auth = {
 };
 
 export const services = {
-    getAll: () => 
-        api.get('/services/'),
+    getAll: async () => {
+        // Get user type and ID from localStorage
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+            try {
+                const userData = JSON.parse(userStr);
+                console.log('User data loaded:', userData);
+                
+                // Wait for provider profile if needed
+                if (userData.user_type === 'provider' && !userData.provider_profile) {
+                    console.log('Fetching provider profile...');
+                    const profileResponse = await api.get('/provider/profile/');
+                    userData.provider_profile = profileResponse.data;
+                    console.log('Provider profile loaded:', userData.provider_profile);
+                }
+                
+                if (userData.user_type === 'provider' && userData.provider_profile) {
+                    // If user is a provider, get only their services
+                    console.log('Getting provider services for ID:', userData.provider_profile.id);
+                    return api.get(`/services/provider/${userData.provider_profile.id}/`);
+                }
+            } catch (e) {
+                console.error('Error parsing user data or fetching provider profile:', e);
+            }
+        }
+        // For consumers or if user type can't be determined, get all services
+        console.log('Getting all services');
+        return api.get('/services/');
+    },
+    
+    getByProvider: (providerId) => {
+        console.log('Getting services for provider:', providerId);
+        return api.get(`/services/provider/${providerId}/`);
+    },
     
     getById: (id) =>
         api.get(`/services/${id}/`),
@@ -70,7 +102,7 @@ export const services = {
         api.post('/services/create/', serviceData),
     
     update: (id, serviceData) =>
-        api.post('/services/create/', { ...serviceData, id }),
+        api.put(`/services/${id}/`, serviceData),
     
     delete: (id) =>
         api.delete(`/services/${id}/`),
@@ -106,31 +138,38 @@ export const providers = {
 };
 
 export const appointments = {
-    getAll: () =>
-        api.get('/appointments/'),
+    getAll: () => {
+        // Get user type and ID from localStorage
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+            try {
+                const userData = JSON.parse(userStr);
+                if (userData.user_type === 'provider' && userData.provider_profile) {
+                    // If user is a provider, get their appointments
+                    return api.get(`/appointments/provider/${userData.provider_profile.id}/`);
+                } else if (userData.user_type === 'consumer') {
+                    // If user is a consumer, get their appointments
+                    return api.get(`/appointments/consumer/${userData.id}/`);
+                }
+            } catch (e) {
+                console.error('Error parsing user data:', e);
+            }
+        }
+        // Default to getting all appointments if user type can't be determined
+        return api.get('/appointments/');
+    },
+    
+    getByProvider: (providerId) =>
+        api.get(`/appointments/provider/${providerId}/`),
+    
+    getByConsumer: (consumerId) =>
+        api.get(`/appointments/consumer/${consumerId}/`),
     
     getById: (id) =>
         api.get(`/appointments/${id}/`),
     
-    create: async (appointmentData) => {
-        console.log('Creating appointment with data:', appointmentData);
-        try {
-            const response = await api.post('/appointments/', appointmentData);
-            console.log('Appointment created successfully:', response.data);
-            return response;
-        } catch (error) {
-            console.error('Error creating appointment:', error);
-            if (error.response) {
-                console.error('Error response data:', error.response.data);
-                console.error('Status code:', error.response.status);
-            } else if (error.request) {
-                console.error('No response received, request:', error.request);
-            } else {
-                console.error('Error message:', error.message);
-            }
-            throw error;
-        }
-    },
+    create: (appointmentData) =>
+        api.post('/appointments/', appointmentData),
     
     update: (id, appointmentData) =>
         api.put(`/appointments/${id}/`, appointmentData),
@@ -140,9 +179,6 @@ export const appointments = {
     
     delete: (id) =>
         api.delete(`/appointments/${id}/`),
-        
-    getAllForProvider: () =>
-        api.get('/appointments/'),
 };
 
 // API service for provider availability
