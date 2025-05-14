@@ -645,7 +645,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             const startMinutes = startTime.getHours() * 60 + startTime.getMinutes();
             const endMinutes = endTime.getHours() * 60 + endTime.getMinutes();
             
-            // Calculate position and height based on exact start and end times
             const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
             const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
 
@@ -696,7 +695,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             const startMinutes = block.start.getHours() * 60 + block.start.getMinutes();
             const endMinutes = block.end.getHours() * 60 + block.end.getMinutes();
             
-            // Calculate position and height based on exact start and end times
             const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
             const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
 
@@ -717,14 +715,20 @@ const AppointmentCalendar = forwardRef(({ mode,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                        cursor: mode === 'provider' ? 'pointer' : 'default',
+                        cursor: mode === 'provider' ? 'pointer' : 'pointer', // Changed to always be pointer
                         zIndex: 1,
                         '&:hover': {
                             backgroundColor: '#bbdefb',
                             borderColor: '#1976d2',
                         }
                     }}
-                    onClick={() => mode === 'provider' && handleBlockClick(block)}
+                    onClick={() => {
+                        if (mode === 'provider') {
+                            handleBlockClick(block);
+                        } else if (mode === 'consumer' && onBlockClick) {
+                            onBlockClick(block);
+                        }
+                    }}
                 >
                     <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
                         {format(block.start, 'h:mm a')} - {format(block.end, 'h:mm a')}
@@ -732,6 +736,11 @@ const AppointmentCalendar = forwardRef(({ mode,
                     <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block' }}>
                         Available
                     </Typography>
+                    {mode === 'consumer' && service && (
+                        <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block', color: 'primary.main' }}>
+                            ${service.price}
+                        </Typography>
+                    )}
                 </Box>
             );
         }
