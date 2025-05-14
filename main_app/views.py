@@ -15,6 +15,7 @@ from django.core.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.utils import timezone
 import datetime
+import uuid
 
 # For parsing ISO format datetimes
 from dateutil.parser import parse as parse_datetime
@@ -43,6 +44,13 @@ class RegisterAPI(APIView):
             user_type = request.data.get('user_type')
             phone_number = request.data.get('phone_number', '')
             address = request.data.get('address', '')
+            
+            # Extract expanded address fields
+            street_address = request.data.get('street_address', '')
+            apartment = request.data.get('apartment', '')
+            city = request.data.get('city', '')
+            state = request.data.get('state', '')
+            zip_code = request.data.get('zip_code', '')
             
             print(f"DEBUG RegisterAPI: username={username}, email={email}, password_length={len(password) if password else 0}, user_type={user_type}")
             
@@ -95,7 +103,12 @@ class RegisterAPI(APIView):
                 password=password,
                 user_type=user_type,
                 phone_number=phone_number,
-                address=address
+                address=address,
+                street_address=street_address,
+                apartment=apartment,
+                city=city,
+                state=state,
+                zip_code=zip_code
             )
             
             # Create token
@@ -108,7 +121,14 @@ class RegisterAPI(APIView):
                     'id': user.id,
                     'username': user.username,
                     'email': user.email,
-                    'user_type': user.user_type
+                    'user_type': user.user_type,
+                    'phone_number': user.phone_number,
+                    'address': user.address,
+                    'street_address': user.street_address,
+                    'apartment': user.apartment,
+                    'city': user.city,
+                    'state': user.state,
+                    'zip_code': user.zip_code
                 }
             }, http_status.HTTP_201_CREATED)
             
@@ -164,6 +184,13 @@ class LoginAPI(APIView):
                     'username': user.username,
                     'email': user.email,
                     'user_type': user.user_type,
+                    'phone_number': user.phone_number,
+                    'address': user.address,
+                    'street_address': user.street_address,
+                    'apartment': user.apartment,
+                    'city': user.city,
+                    'state': user.state,
+                    'zip_code': user.zip_code,
                     'needs_setup': needs_setup
                 }
             })
@@ -444,7 +471,12 @@ class UserProfileAPI(APIView):
             'email': user.email,
             'user_type': user.user_type,
             'phone_number': user.phone_number,
-            'address': user.address
+            'address': user.address,
+            'street_address': user.street_address,
+            'apartment': user.apartment,
+            'city': user.city,
+            'state': user.state,
+            'zip_code': user.zip_code
         })
         
     def put(self, request):
@@ -460,6 +492,11 @@ class UserProfileAPI(APIView):
         email = request.data.get('email')
         phone_number = request.data.get('phone_number')
         address = request.data.get('address')
+        street_address = request.data.get('street_address')
+        apartment = request.data.get('apartment')
+        city = request.data.get('city')
+        state = request.data.get('state')
+        zip_code = request.data.get('zip_code')
         
         if email:
             # Check if email already exists but belongs to another user
@@ -474,6 +511,43 @@ class UserProfileAPI(APIView):
             
         if address is not None:
             user.address = address
+        
+        # Update new address fields
+        if street_address is not None:
+            user.street_address = street_address
+            
+        if apartment is not None:
+            user.apartment = apartment
+            
+        if city is not None:
+            user.city = city
+            
+        if state is not None:
+            user.state = state
+            
+        if zip_code is not None:
+            user.zip_code = zip_code
+            
+        # If address fields are provided but address is not, create a combined address
+        if not address and any([street_address, apartment, city, state, zip_code]):
+            address_parts = []
+            if user.street_address:
+                address_parts.append(user.street_address)
+            if user.apartment:
+                address_parts.append(user.apartment)
+                
+            location_parts = []
+            if user.city:
+                location_parts.append(user.city)
+            if user.state:
+                location_parts.append(user.state)
+            if user.zip_code:
+                location_parts.append(user.zip_code)
+                
+            if location_parts:
+                address_parts.append(', '.join(location_parts))
+                
+            user.address = '\n'.join(address_parts)
             
         user.save()
         
@@ -483,7 +557,12 @@ class UserProfileAPI(APIView):
             'email': user.email,
             'user_type': user.user_type,
             'phone_number': user.phone_number,
-            'address': user.address
+            'address': user.address,
+            'street_address': user.street_address,
+            'apartment': user.apartment,
+            'city': user.city,
+            'state': user.state,
+            'zip_code': user.zip_code
         })
 
 class PasswordChangeAPI(APIView):
@@ -942,6 +1021,14 @@ class AppointmentListAPI(APIView):
             notes = request.data.get('notes', '')
             status = request.data.get('status', 'pending')
             
+            # Extract address fields
+            address_line1 = request.data.get('address_line1', '')
+            address_line2 = request.data.get('address_line2', '')
+            city = request.data.get('city', '')
+            state = request.data.get('state', '')
+            zip_code = request.data.get('zip_code', '')
+            country = request.data.get('country', 'United States')
+            
             # Get service
             service = Service.objects.get(id=service_id)
             
@@ -996,19 +1083,28 @@ class AppointmentListAPI(APIView):
                 }, http_status.HTTP_409_CONFLICT)
             
             # Create appointment
-            appointment = Appointment.objects.create(
+            appointment = Appointment(
                 service=service,
                 consumer=request.user,
                 start_time=start_time,
                 end_time=end_time,
                 notes=notes,
-                status=status
+                status=status,
+                # Add address fields
+                address_line1=address_line1,
+                address_line2=address_line2,
+                city=city,
+                state=state,
+                zip_code=zip_code,
+                country=country,
+                id=uuid.uuid4()  # Explicitly set a UUID
             )
+            appointment.save()
             
             print(f"DEBUG APPOINTMENT: Successfully created appointment {appointment.id}")
             
             return Response({
-                'id': appointment.id,
+                'id': str(appointment.id),  # Convert UUID to string for JSON
                 'service': {
                     'id': appointment.service.id,
                     'name': appointment.service.name
@@ -1016,7 +1112,12 @@ class AppointmentListAPI(APIView):
                 'start_time': start_time,
                 'end_time': end_time,
                 'status': appointment.status,
-                'notes': appointment.notes
+                'notes': appointment.notes,
+                'address_line1': appointment.address_line1,
+                'address_line2': appointment.address_line2,
+                'city': appointment.city,
+                'state': appointment.state,
+                'zip_code': appointment.zip_code
             }, http_status.HTTP_201_CREATED)
             
         except Service.DoesNotExist:
@@ -1062,6 +1163,14 @@ class AppointmentDetailAPI(APIView):
                 'end_time': appointment.end_time.isoformat(),
                 'status': appointment.status,
                 'notes': appointment.notes,
+                'address': {
+                    'address_line1': appointment.address_line1,
+                    'address_line2': appointment.address_line2,
+                    'city': appointment.city,
+                    'state': appointment.state,
+                    'zip_code': appointment.zip_code,
+                    'country': appointment.country
+                },
                 'created_at': appointment.created_at.isoformat(),
                 'updated_at': appointment.updated_at.isoformat()
             })

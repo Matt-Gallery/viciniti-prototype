@@ -10,7 +10,8 @@ import {
     Divider,
     Box,
     Typography,
-    Button
+    Button,
+    Grid
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { format } from 'date-fns';
@@ -59,20 +60,83 @@ const ConsumerAppointmentCalendar = ({
     const handleBlockClick = (block) => {
         setSelectedSlot(block);
         
+        // Initialize with empty values
+        const initialBookingData = {
+            email: '',
+            phone: '',
+            address_line1: '',
+            address_line2: '',
+            city: '',
+            state: '',
+            zip_code: '',
+            notes: ''
+        };
+        
         // Pre-populate with user data if available
         const userStr = localStorage.getItem('user');
         if (userStr) {
             try {
                 const userData = JSON.parse(userStr);
-                setBookingData({
-                    email: userData.email || '',
-                    phone: userData.phone || '',
-                    address: userData.address || '',
-                    notes: ''
-                });
+                console.log('User data from localStorage:', userData);
+                
+                // Set email from user data
+                initialBookingData.email = userData.email || '';
+                
+                // IMPORTANT: Map from backend phone_number field to our phone field
+                initialBookingData.phone = userData.phone_number || '';
+                
+                // Set address fields from userData properties if they exist
+                if (userData.street_address) initialBookingData.address_line1 = userData.street_address;
+                if (userData.apartment) initialBookingData.address_line2 = userData.apartment;
+                if (userData.city) initialBookingData.city = userData.city;
+                if (userData.state) initialBookingData.state = userData.state;
+                if (userData.zip_code) initialBookingData.zip_code = userData.zip_code;
+                
+                // If the new fields aren't available, try to parse from the legacy address field
+                if (userData.address && (!userData.street_address && !userData.city)) {
+                    console.log('Parsing from legacy address:', userData.address);
+                    const addressLines = userData.address.split(/\n|,/).map(line => line.trim());
+                    
+                    if (addressLines.length >= 1) {
+                        initialBookingData.address_line1 = addressLines[0] || '';
+                    }
+                    
+                    if (addressLines.length >= 2) {
+                        // Check if second line looks like an apartment/suite
+                        if (addressLines[1] && (
+                            addressLines[1].toLowerCase().includes('apt') || 
+                            addressLines[1].toLowerCase().includes('suite') || 
+                            addressLines[1].toLowerCase().includes('#')
+                        )) {
+                            initialBookingData.address_line2 = addressLines[1];
+                            
+                            // If we have more lines, try to parse city, state, zip
+                            if (addressLines.length >= 3) {
+                                const cityStateZip = addressLines[2].split(/\s+/);
+                                if (cityStateZip.length >= 1) initialBookingData.city = cityStateZip[0];
+                                if (cityStateZip.length >= 2) initialBookingData.state = cityStateZip[1];
+                                if (cityStateZip.length >= 3) initialBookingData.zip_code = cityStateZip[2];
+                            }
+                        } else {
+                            // Assume it's city, state, zip
+                            const cityStateZip = addressLines[1].split(/\s+/);
+                            if (cityStateZip.length >= 1) initialBookingData.city = cityStateZip[0];
+                            if (cityStateZip.length >= 2) initialBookingData.state = cityStateZip[1];
+                            if (cityStateZip.length >= 3) initialBookingData.zip_code = cityStateZip[2];
+                        }
+                    }
+                }
+                
+                console.log('Pre-populating form with data:', initialBookingData);
+                setBookingData(initialBookingData);
+                
             } catch (e) {
-                console.error('Error parsing user data');
+                console.error('Error parsing user data', e);
+                setBookingData(initialBookingData);
             }
+        } else {
+            console.log('No user data found in localStorage');
+            setBookingData(initialBookingData);
         }
         
         setBookingDialogOpen(true);
@@ -87,6 +151,35 @@ const ConsumerAppointmentCalendar = ({
             ...prev,
             [name]: value 
         }));
+        
+        // If address fields change, update the combined address field
+        if(['address_line1', 'address_line2', 'city', 'state', 'zip_code'].includes(name)) {
+            const updatedFormData = {
+                ...bookingData,
+                [name]: value
+            };
+            
+            // Combine the address fields
+            let addressParts = [];
+            if (updatedFormData.address_line1) addressParts.push(updatedFormData.address_line1);
+            if (updatedFormData.address_line2) addressParts.push(updatedFormData.address_line2);
+            
+            let cityStateZip = [];
+            if (updatedFormData.city) cityStateZip.push(updatedFormData.city);
+            if (updatedFormData.state) cityStateZip.push(updatedFormData.state);
+            if (updatedFormData.zip_code) cityStateZip.push(updatedFormData.zip_code);
+            
+            if (cityStateZip.length > 0) {
+                addressParts.push(cityStateZip.join(', '));
+            }
+            
+            // Update the combined address field
+            setBookingData(prev => ({
+                ...prev,
+                [name]: value,
+                address: addressParts.join('\n')
+            }));
+        }
     };
     
     // Force refresh the calendar component to show updated appointments
@@ -104,6 +197,31 @@ const ConsumerAppointmentCalendar = ({
         // Validate inputs
         if (!bookingData.email) {
             setBookingError('Email is required');
+            return;
+        }
+        
+        if (!bookingData.phone) {
+            setBookingError('Phone number is required');
+            return;
+        }
+        
+        if (!bookingData.address_line1) {
+            setBookingError('Street address is required');
+            return;
+        }
+        
+        if (!bookingData.city) {
+            setBookingError('City is required');
+            return;
+        }
+        
+        if (!bookingData.state) {
+            setBookingError('State is required');
+            return;
+        }
+        
+        if (!bookingData.zip_code) {
+            setBookingError('ZIP code is required');
             return;
         }
         
@@ -126,7 +244,12 @@ const ConsumerAppointmentCalendar = ({
                 notes: bookingData.notes || '',
                 client_email: bookingData.email, // This must be sent
                 client_phone: bookingData.phone || '',
-                client_address: bookingData.address || ''
+                address_line1: bookingData.address_line1 || '',
+                address_line2: bookingData.address_line2 || '',
+                city: bookingData.city || '',
+                state: bookingData.state || '',
+                zip_code: bookingData.zip_code || '',
+                country: 'United States'
             };
             
             console.log('Sending appointment data', JSON.stringify(appointmentData));
@@ -277,22 +400,73 @@ const ConsumerAppointmentCalendar = ({
                             />
                             
                             <TextField
-                                label="Phone (optional)"
+                                label="Phone"
                                 name="phone"
                                 value={bookingData.phone || ''}
+                                onChange={handleInputChange}
+                                fullWidth
+                                required
+                                margin="dense"
+                            />
+                            
+                            <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>
+                                Address Information
+                            </Typography>
+                            
+                            <TextField
+                                label="Street Address"
+                                name="address_line1"
+                                value={bookingData.address_line1 || ''}
+                                onChange={handleInputChange}
+                                fullWidth
+                                required
+                                margin="dense"
+                            />
+                            
+                            <TextField
+                                label="Apartment/Suite/Unit (optional)"
+                                name="address_line2"
+                                value={bookingData.address_line2 || ''}
                                 onChange={handleInputChange}
                                 fullWidth
                                 margin="dense"
                             />
                             
-                            <TextField
-                                label="Address (optional)"
-                                name="address"
-                                value={bookingData.address || ''}
-                                onChange={handleInputChange}
-                                fullWidth
-                                margin="dense"
-                            />
+                            <Grid container spacing={2} sx={{ mt: 0 }}>
+                                <Grid item xs={12} sm={5}>
+                                    <TextField
+                                        fullWidth
+                                        label="City"
+                                        name="city"
+                                        value={bookingData.city || ''}
+                                        onChange={handleInputChange}
+                                        required
+                                        margin="dense"
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={3}>
+                                    <TextField
+                                        fullWidth
+                                        label="State"
+                                        name="state"
+                                        value={bookingData.state || ''}
+                                        onChange={handleInputChange}
+                                        required
+                                        margin="dense"
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={4}>
+                                    <TextField
+                                        fullWidth
+                                        label="ZIP Code"
+                                        name="zip_code"
+                                        value={bookingData.zip_code || ''}
+                                        onChange={handleInputChange}
+                                        required
+                                        margin="dense"
+                                    />
+                                </Grid>
+                            </Grid>
                             
                             <TextField
                                 label="Special Requests or Notes (optional)"

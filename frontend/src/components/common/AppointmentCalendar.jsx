@@ -15,7 +15,7 @@ import { Box,
     Chip,
     Divider,
     Tooltip,
-} from '@mui/material';
+     } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format, addDays, areIntervalsOverlapping } from 'date-fns';
@@ -62,7 +62,7 @@ const AppointmentCalendar = forwardRef(({ mode,
     const HOUR_HEIGHT = 70;        // Increased from 50 to 70 pixels per hour
     
     const [providerAppointments, setProviderAppointments] = useState([]);
-
+    
     // Define fetch functions before useEffect
     const fetchProviderAvailability = async (provId) => {
         try {
@@ -78,10 +78,10 @@ const AppointmentCalendar = forwardRef(({ mode,
                         id: block.id,
                         start: new Date(block.start),
                         end: new Date(block.end)
-                    }));
+                     }));
                 } else {
                     formattedAvailability[dateStr] = [];
-                }
+                 }
             });
             
             // Merge with initial availability to ensure all days have entries
@@ -90,14 +90,14 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Add all the loaded availability to the merged object
             Object.entries(formattedAvailability).forEach(([dateStr, blocks]) => {
                 mergedAvailability[dateStr] = blocks;
-            });
+             });
             
             // Ensure all days in our view have entries (even if empty)
             days.forEach(day => {
                 const dateStr = format(day, 'yyyy-MM-dd');
                 if (!mergedAvailability[dateStr]) {
                     mergedAvailability[dateStr] = [];
-                }
+                 }
             });
             
             setTimeBlocks(mergedAvailability);
@@ -106,7 +106,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             console.error('Error fetching availability');
             setError('Failed to load availability data');
             setLoading(false);
-        }
+         }
     };
     
     const fetchServiceAvailability = async (servId) => {
@@ -119,8 +119,9 @@ const AppointmentCalendar = forwardRef(({ mode,
             const formattedAvailability = {};
             Object.entries(response.data).forEach(([dateStr, blocks]) => {
                 if (Array.isArray(blocks)) {
-                    formattedAvailability[dateStr] = blocks.map((block) => ({
-                        id: block.id,
+                    formattedAvailability[dateStr] = blocks.map((block, index) => ({
+                        // Ensure each block has a truly unique ID by incorporating both date and index
+                        id: `${dateStr}-${block.id}-${index}`,
                         start: new Date(block.start),
                         end: new Date(block.end)
                     }));
@@ -159,7 +160,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             return [];
         }
     };
-
+    
     const fetchProviderAppointments = async () => {
         if (mode !== 'provider' || !providerId) return;
         
@@ -224,7 +225,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (mode !== 'provider' || !providerId) {
             console.error('Cannot save availability in provider mode or providerId is missing');
             return;
-        }
+         }
         
         try {
             setLoading(true);
@@ -238,7 +239,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                         id: block.id,
                         start: block.start.toISOString(),
                         end: block.end.toISOString()
-                    }));
+                     }));
                 }
             });
             
@@ -252,7 +253,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             console.error('Error saving availability');
             setError('Failed to save availability data');
             setLoading(false);
-        }
+         }
     };
     
     const handleDaySelect = (day) => {
@@ -263,7 +264,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         setStartTime(null);
         setEndTime(null);
         setTimeError('');
-    };
+     };
     
     const handleAddBlock = (day) => {
         if (mode !== 'provider') return;
@@ -273,11 +274,11 @@ const AppointmentCalendar = forwardRef(({ mode,
         setEndTime(null);
         setTimeError('');
         setDialogOpen(true);
-    };
+     };
     
     const handleCloseDialog = () => {
         setDialogOpen(false);
-    };
+     };
     
     const handleSaveTimeBlock = () => {
         if (mode !== 'provider') {
@@ -332,7 +333,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (hasOverlap) {
             setTimeError('Time block overlaps with existing availability');
             return;
-        }
+         }
         
         const updatedBlocks = [...existingBlocks, newBlock].sort((a, b) => 
             a.start.getTime() - b.start.getTime()
@@ -340,7 +341,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         
         const newAvailability = { ...timeBlocks,
             [dateStr]: updatedBlocks
-        };
+         };
         
         console.log('Updated availability with new block');
         setTimeBlocks(newAvailability);
@@ -352,7 +353,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             onAvailabilityChange(newAvailability);
         } else {
             console.warn('No onAvailabilityChange callback provided');
-        }
+         }
     };
     
     const handleDeleteBlock = (day, blockId) => {
@@ -365,21 +366,21 @@ const AppointmentCalendar = forwardRef(({ mode,
         const newAvailability = {
             ...timeBlocks,
             [dateStr]: updatedBlocks
-        };
+         };
         
         setTimeBlocks(newAvailability);
         
         // Notify parent component if callback provided
         if (onAvailabilityChange) {
             onAvailabilityChange(newAvailability);
-        }
+         }
     };
     
     const handleBlockClick = (block) => {
         if (mode === 'consumer' && onBlockClick) {
             console.log('Block clicked for booking');
             onBlockClick(block);
-        }
+         }
     };
     
     // Generate time slots for display
@@ -387,7 +388,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         const slots = [];
         for (let hour = WORKING_HOURS_START; hour < WORKING_HOURS_END; hour++) {
             slots.push(hour);
-        }
+         }
         return slots;
     };
     
@@ -397,7 +398,7 @@ const AppointmentCalendar = forwardRef(({ mode,
     const getBlocksForDay = (day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
         return timeBlocks[dateStr] || [];
-    };
+     };
 
     // Get existing user appointments for a specific day
     const getAppointmentsForDay = (day) => {
@@ -405,7 +406,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         return appointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
-        });
+         });
     };
     
     // Get provider appointments for a specific day
@@ -416,7 +417,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         return providerAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
-        });
+         });
     };
     
     // Calculate position and height for a time block
@@ -451,22 +452,22 @@ const AppointmentCalendar = forwardRef(({ mode,
                     border: '#c3e6cb',
                     hover: '#c3e6cb',
                     text: '#155724'
-                },
+                 },
                 pending: { bg: '#fff3cd', // Light yellow
                     border: '#ffeeba',
                     hover: '#ffeeba',
                     text: '#856404'
-                },
+                 },
                 cancelled: { bg: '#f8d7da', // Light red
                     border: '#f5c6cb',
                     hover: '#f5c6cb',
                     text: '#721c24'
-                },
+                 },
                 completed: { bg: '#cce5ff', // Light blue
                     border: '#b8daff',
                     hover: '#b8daff',
                     text: '#004085'
-                }
+                 }
             };
             
             const colorSet = statusColors[appointment.status] || statusColors.confirmed;
@@ -491,7 +492,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 cursor: 'default',
                 '&:hover': {
                     backgroundColor: '#c3e6cb',
-                }
+                 }
             };
         } else if (mode === 'consumer') {
             return {
@@ -501,7 +502,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 '&:hover': {
                     backgroundColor: '#bbdefb',
                     borderColor: '#1976d2',
-                }
+                 }
             };
         } else {
             return {
@@ -509,7 +510,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 backgroundColor: '#bbdefb',
                 '&:hover': {
                     backgroundColor: '#90caf9',
-                }
+                 }
             };
         }
     };
@@ -521,7 +522,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             setCancelError('');
             setCancelSuccess(false);
             setAppointmentDetailsOpen(true);
-        }
+         }
     };
     
     // Handle appointment click to show details
@@ -531,7 +532,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             setCancelError('');
             setCancelSuccess(false);
             setAppointmentDetailsOpen(true);
-        }
+         }
     };
     
     // Handle cancellation of appointment
@@ -563,13 +564,13 @@ const AppointmentCalendar = forwardRef(({ mode,
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
-            }, 2000);
+             }, 2000);
             
         } catch (err) {
             console.error('Error cancelling appointment');
             setCancelError('Failed to cancel appointment. Please try again.');
             setCancelInProgress(false);
-        }
+         }
     };
     
     // Handle status change for provider appointments
@@ -596,7 +597,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
-            }, 2000);
+             }, 2000);
             
         } catch (err) {
             console.error('Error updating appointment status');
@@ -650,7 +651,7 @@ const AppointmentCalendar = forwardRef(({ mode,
 
             return (
                 <Box
-                    key={`${dateStr}-${appointment.id}`}
+                    key={`appointment-${dateStr}-${appointment.id}-${hour}`}
                     sx={{
                         position: 'absolute',
                         top: `${top}px`,
@@ -700,7 +701,7 @@ const AppointmentCalendar = forwardRef(({ mode,
 
             return (
                 <Box
-                    key={`${dateStr}-${block.id}`}
+                    key={`block-${block.id}-${hour}`}
                     sx={{
                         position: 'absolute',
                         top: `${top}px`,
@@ -715,7 +716,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                        cursor: mode === 'provider' ? 'pointer' : 'pointer', // Changed to always be pointer
+                        cursor: mode === 'provider' ? 'pointer' : 'pointer', 
                         zIndex: 1,
                         '&:hover': {
                             backgroundColor: '#bbdefb',
@@ -754,7 +755,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 <CircularProgress />
             </Box>
         );
-    }
+     }
     
     return (
         <Box sx={{ 
@@ -824,7 +825,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                     overflow: 'hidden',
                     width: '100%',
                     position: 'relative'
-                }}>
+                  }}>
                     { /* Scrollable area containing time labels and day columns */ }
                     <Box sx={{ display: 'flex', 
                         flexDirection: 'row',
@@ -832,7 +833,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                         height: '400px',
                         overflow: 'auto',
                         position: 'relative'
-                    }}>
+                      }}>
                         { /* Time labels column - inside the scrollable area */ }
                         <Box sx={{ width: '30px', flexShrink: 0, position: 'sticky', left: 0, zIndex: 5, bgcolor: '#f5f5f5'   }}>
                             { /* Day header placeholder to align with day columns */ }
@@ -863,7 +864,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             pr: 1,
                                             borderTop: '1px solid #ddd',
                                             bgcolor: '#f5f5f5'
-                                        }}
+                                          }}
                                     >
                                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', pt: 1   }}>
                                             {format(new Date().setHours(hour, 0, 0), 'h a')}
@@ -908,7 +909,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             height: '39px',
                                             borderBottom: '2px solid rgba(255, 255, 255, 0.2)', // Add bottom border to day header
                                             boxShadow: '0 2px 4px rgba(0,0,0,0.1)' // Add subtle shadow for depth
-                                        }}>
+                                          }}>
                                             <Typography variant="subtitle2" fontWeight="bold" sx={{ fontSize: '0.8rem'   }}>
                                                 {format(day, 'EEE, MMM d')}
                                             </Typography>
@@ -951,7 +952,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                         borderTop: '1px solid #ddd',
                                                         height: HOUR_HEIGHT,
                                                         zIndex: 1,
-                                                    }}
+                                                      }}
                                                 />
                                             ))}
                                             
@@ -968,11 +969,11 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             {renderTimeBlock(day, 17)}
                                             {renderTimeBlock(day, 18)}
                                             {renderTimeBlock(day, 19)}
-                                        </Box>
-                                    </Box>
-                                );
-                            })}
-                        </Box>
+                                                        </Box>
+                                                    </Box>
+                                                );
+                                            })}
+                                                            </Box>
                     </Box>
                 </Box>
             </Box>
@@ -1005,13 +1006,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             const newTime = new Date();
                                             newTime.setHours(Number(hours), Number(minutes));
                                             setStartTime(newTime);
-                                        }}
+                                         }}
                                         InputLabelProps={{
                                             shrink: true,
-                                        }}
+                                         }}
                                         inputProps={{
                                             step: 300, // 5 min
-                                        }}
+                                         }}
                                     />
                                 </Box>
                                 <Box sx={{ flex: 1 }}>
@@ -1025,13 +1026,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             const newTime = new Date();
                                             newTime.setHours(Number(hours), Number(minutes));
                                             setEndTime(newTime);
-                                        }}
+                                         }}
                                         InputLabelProps={{
                                             shrink: true,
-                                        }}
+                                         }}
                                         inputProps={{
                                             step: 300, // 5 min
-                                        }}
+                                         }}
                                     />
                                 </Box>
                             </Box>
@@ -1059,7 +1060,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 display: 'inline-block', 
                                 mr: 1, 
                                 border: '1px solid #90caf9' 
-                            }}></Box>
+                              }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Available Slots
                             </Typography>
@@ -1071,7 +1072,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 display: 'inline-block', 
                                 mr: 1, 
                                 border: '1px solid #c3e6cb' 
-                            }}></Box>
+                              }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Your Booked Appointments
                             </Typography>

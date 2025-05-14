@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
+import uuid
 
 class User(AbstractUser):
     USER_TYPE_CHOICES = (
@@ -10,6 +11,11 @@ class User(AbstractUser):
     user_type = models.CharField(max_length=10, choices=USER_TYPE_CHOICES)
     phone_number = models.CharField(max_length=15, blank=True)
     address = models.TextField(blank=True)
+    street_address = models.CharField(max_length=100, blank=True)
+    apartment = models.CharField(max_length=50, blank=True)
+    city = models.CharField(max_length=50, blank=True)
+    state = models.CharField(max_length=20, blank=True)
+    zip_code = models.CharField(max_length=20, blank=True)
 
 class ServiceProvider(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='provider_profile')
@@ -52,6 +58,7 @@ class Service(models.Model):
         return self.name
 
 class Appointment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     STATUS_CHOICES = (
         ('pending', 'Pending'),
         ('confirmed', 'Confirmed'),
@@ -65,6 +72,24 @@ class Appointment(models.Model):
     end_time = models.DateTimeField()
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
     notes = models.TextField(blank=True)
+    
+    # Address fields that already exist in the database
+    address_line1 = models.CharField(max_length=100, blank=True)
+    address_line2 = models.CharField(max_length=50, blank=True)
+    city = models.CharField(max_length=50, blank=True)
+    state = models.CharField(max_length=20, blank=True)
+    postal_code = models.CharField(max_length=20, blank=True)
+    zip_code = models.CharField(max_length=20, blank=True)
+    country = models.CharField(max_length=50, blank=True, default='United States')
+    
+    # Other fields that exist in the database
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    original_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    final_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    discount_reason = models.CharField(max_length=100, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
