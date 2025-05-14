@@ -20,7 +20,6 @@ import { format, addDays, areIntervalsOverlapping } from 'date-fns';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { availability as availabilityApi, appointments as appointmentsApi } from '../../services/api';
-import { availability as availabilityApi, appointments as appointmentsApi } from '../../services/api';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 const AppointmentCalendar = forwardRef(({ mode,
@@ -114,8 +113,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Ensure all days in our view have entries (even if empty)
             days.forEach(day => {
                 const dateStr = format(day, 'yyyy-MM-dd');
-            days.forEach(day => {
-                const dateStr = format(day, 'yyyy-MM-dd');
                 if (!mergedAvailability[dateStr]) {
                     mergedAvailability[dateStr] = [];
                 }
@@ -129,7 +126,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             console.error('Error fetching availability:', err);
             setError('Failed to load availability data');
             setLoading(false);
-         }
+        }
     }, [days, loading, timeBlocks, availabilityFetched]);
     
     const fetchServiceAvailability = useCallback(async (forceRefresh = false) => {
@@ -863,9 +860,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Close modal after short delay
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
-            setTimeout(() => {
-                setAppointmentDetailsOpen(false);
-                setSelectedAppointment(null);
             }, 1500);
             
         } catch (error) {
@@ -925,7 +919,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             setCancelError('');
             
             console.log(`Updating appointment ${selectedAppointment.id} status to ${newStatus}`);
-            console.log(`Updating appointment ${selectedAppointment.id} status to ${newStatus}`);
             
             // Update UI immediately for better user experience
             updateAppointmentStatus(selectedAppointment.id, newStatus);
@@ -956,9 +949,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Close modal after short delay
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
-            setTimeout(() => {
-                setAppointmentDetailsOpen(false);
-                setSelectedAppointment(null);
             }, 1500);
             
         } catch (error) {

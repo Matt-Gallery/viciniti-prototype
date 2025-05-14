@@ -81,7 +81,7 @@ WSGI_APPLICATION = 'viciniti.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
+        'ENGINE': 'django.contrib.gis.db.backends.postgis',
         'NAME': 'vicinitix',
         'USER': 'admin',
         'PASSWORD': 'password',

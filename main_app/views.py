@@ -941,9 +941,7 @@ class ServiceAvailabilityAPI(APIView):
             # Add debug logging
             print(f"DEBUG AVAILABILITY: Calculating availability for service {service_id}")
             
-            from .models import Service, ProviderAvailability, Appointment, ProximityDiscountTier, ProximityDiscount
-            from django.contrib.gis.geos import Point
-            from django.contrib.gis.db.models.functions import Distance
+            from .models import Service, ProviderAvailability, Appointment
             
             # Check if service exists
             service = Service.objects.get(id=service_id)
@@ -952,42 +950,15 @@ class ServiceAvailabilityAPI(APIView):
             provider = service.provider
             print(f"DEBUG AVAILABILITY: Found provider: {provider.business_name}")
             
-            # Get consumer location if provided
-            consumer_lat = request.GET.get('latitude')
-            consumer_lng = request.GET.get('longitude')
-            consumer_location = None
-            
-            if consumer_lat and consumer_lng:
-                try:
-                    consumer_lat = float(consumer_lat)
-                    consumer_lng = float(consumer_lng)
-                    consumer_location = Point(consumer_lng, consumer_lat, srid=4326)
-                    print(f"DEBUG AVAILABILITY: Consumer location provided: {consumer_lat}, {consumer_lng}")
-                except (ValueError, TypeError):
-                    print(f"DEBUG AVAILABILITY: Invalid location coordinates: {consumer_lat}, {consumer_lng}")
-                    consumer_location = None
-            
-            # Get existing appointments for this provider (not just this service)
-            # This ensures we account for all provider commitments
+            # Get existing appointments for this provider WITHOUT using location field at all
             existing_appointments = Appointment.objects.filter(
                 service__provider=provider,  # All provider appointments
                 status__in=['pending', 'confirmed', 'completed']  # Only active appointments
-            )
-            
-            # If consumer location is provided, annotate appointments with distance
-            if consumer_location:
-                existing_appointments = existing_appointments.filter(
-                    location__isnull=False
-                ).annotate(
-                    distance=Distance('location', consumer_location)
-                )
+            ).only(
+                'id', 'service', 'start_time', 'end_time', 'status'
+            ).defer('location').select_related('service')
             
             print(f"DEBUG AVAILABILITY: Found {existing_appointments.count()} existing appointments")
-            for appt in existing_appointments:
-                if hasattr(appt, 'distance'):
-                    print(f"DEBUG AVAILABILITY: Existing appointment: {appt.service.name} - {appt.start_time} to {appt.end_time} - Distance: {appt.distance.m} meters")
-                else:
-                    print(f"DEBUG AVAILABILITY: Existing appointment: {appt.service.name} - {appt.start_time} to {appt.end_time}")
             
             # Buffer time in minutes to add to both sides of appointments
             buffer_minutes = 15
@@ -996,24 +967,25 @@ class ServiceAvailabilityAPI(APIView):
             blocked_periods = []
             for appointment in existing_appointments:
                 # Add buffer before and after the appointment
-                buffered_start = appointment.start_time - timezone.timedelta(minutes=buffer_minutes)
-                buffered_end = appointment.end_time + timezone.timedelta(minutes=buffer_minutes)
-                
-                blocked_periods.append({
-                    'start': buffered_start,
-                    'end': buffered_end,
-                    'original_appointment': appointment
-                })
-                print(f"DEBUG AVAILABILITY: Blocked period: {buffered_start} to {buffered_end} (from appointment {appointment.id})")
+                try:
+                    buffered_start = appointment.start_time - timezone.timedelta(minutes=buffer_minutes)
+                    buffered_end = appointment.end_time + timezone.timedelta(minutes=buffer_minutes)
+                    
+                    blocked_periods.append({
+                        'start': buffered_start,
+                        'end': buffered_end,
+                        'original_appointment': appointment
+                    })
+                    print(f"DEBUG AVAILABILITY: Blocked period: {buffered_start} to {buffered_end} (from appointment {appointment.id})")
+                except Exception as e:
+                    print(f"DEBUG AVAILABILITY: Error processing appointment {appointment.id}: {str(e)}")
+                    continue
             
             # Get provider's availabilities
             availabilities = ProviderAvailability.objects.filter(provider=provider)
             print(f"DEBUG AVAILABILITY: Found {availabilities.count()} availability blocks")
             
-            # Get provider's discount tiers
-            discount_tiers = ProximityDiscountTier.objects.filter(provider=provider).order_by('tier')
-            has_discount_config = discount_tiers.exists()
-            print(f"DEBUG AVAILABILITY: Provider has discount configuration: {has_discount_config}")
+            # Skip proximity discount features - not implemented in the database yet
             
             # Organize availability by day
             availability_data = {}
@@ -1071,84 +1043,12 @@ class ServiceAvailabilityAPI(APIView):
                         # Check if this slot overlaps with the blocked period
                         # (slot starts before blocked period ends AND slot ends after blocked period starts)
                         if slot['start'] < blocked['end'] and slot['end'] > blocked['start']:
-                            print(f"DEBUG AVAILABILITY: Slot {slot['id']} at {slot['start']} conflicts with appointment {blocked['original_appointment'].id} " + 
-                                  f"({blocked['original_appointment'].service.name}) at {blocked['original_appointment'].start_time} - {blocked['original_appointment'].end_time} " +
-                                  f"[buffered: {blocked['start']} - {blocked['end']}]")
+                            appt = blocked['original_appointment']
+                            print(f"DEBUG AVAILABILITY: Slot {slot['id']} at {slot['start']} conflicts with appointment {appt.id}")
                             is_available = False
                             break
                     
                     if is_available:
-                        # If consumer location is provided and provider has discount configuration,
-                        # calculate discounted price based on proximity to existing appointments
-                        if consumer_location and has_discount_config:
-                            # Create a slot location based on consumer location (for simplified calculation)
-                            slot_location = consumer_location
-                            slot_date = current_start.date()
-                            
-                            # Find appointments on the same day
-                            same_day_appointments = existing_appointments.filter(
-                                start_time__date=slot_date
-                            )
-                            
-                            if same_day_appointments.exists():
-                                # Count nearby appointments within different distance tiers
-                                nearby_appointments_by_tier = {}
-                                for tier in discount_tiers:
-                                    # Convert tier distances to meters for comparison
-                                    min_meters = tier.min_distance * 0.9144 if tier.distance_unit == 'yards' else tier.min_distance * 1609.34
-                                    max_meters = tier.max_distance * 0.9144 if tier.distance_unit == 'yards' else tier.max_distance * 1609.34
-                                    
-                                    # Count appointments within this tier's distance range
-                                    appointments_in_range = 0
-                                    for appt in same_day_appointments:
-                                        if hasattr(appt, 'distance'):
-                                            distance_meters = appt.distance.m
-                                            if min_meters <= distance_meters < max_meters:
-                                                appointments_in_range += 1
-                                                print(f"DEBUG AVAILABILITY: Appointment {appt.id} is in Tier {tier.tier} range ({min_meters}-{max_meters}m), actual distance: {distance_meters}m")
-                                    
-                                    if appointments_in_range > 0:
-                                        nearby_appointments_by_tier[tier.tier] = appointments_in_range
-                                
-                                # Determine the highest discount
-                                best_discount_percent = 0
-                                best_discount_tier = None
-                                best_discount_appt_count = 0
-                                
-                                for tier_num, appt_count in nearby_appointments_by_tier.items():
-                                    # Limit to 5 appointments for discount calculation
-                                    effective_count = min(appt_count, 5)
-                                    
-                                    # Get the discount for this tier and appointment count
-                                    try:
-                                        tier = discount_tiers.get(tier=tier_num)
-                                        discount = ProximityDiscount.objects.get(
-                                            tier=tier,
-                                            appointment_count=effective_count
-                                        )
-                                        
-                                        discount_percent = float(discount.discount_percentage)
-                                        if discount_percent > best_discount_percent:
-                                            best_discount_percent = discount_percent
-                                            best_discount_tier = tier_num
-                                            best_discount_appt_count = effective_count
-                                            print(f"DEBUG AVAILABILITY: Found better discount: {best_discount_percent}% for Tier {best_discount_tier} with {best_discount_appt_count} appointments")
-                                    except (ProximityDiscountTier.DoesNotExist, ProximityDiscount.DoesNotExist):
-                                        pass
-                                
-                                # Apply the best discount if found
-                                if best_discount_percent > 0:
-                                    original_price = float(service.price)
-                                    discount_amount = original_price * (best_discount_percent / 100)
-                                    final_price = original_price - discount_amount
-                                    
-                                    slot['discount_percentage'] = best_discount_percent
-                                    slot['final_price'] = round(final_price, 2)
-                                    slot['nearby_appointments'] = best_discount_appt_count
-                                    
-                                    print(f"DEBUG AVAILABILITY: Applied {best_discount_percent}% discount to slot {slot['id']}")
-                                    print(f"DEBUG AVAILABILITY: Original price: ${original_price}, Final price: ${slot['final_price']}")
-                        
                         available_slots.append(slot)
                         print(f"DEBUG AVAILABILITY: Added available slot: {slot['id']} at {slot['start']}, price: ${slot['final_price']}")
                     
@@ -1189,52 +1089,71 @@ class AppointmentListAPI(APIView):
     def get(self, request):
         """Get all appointments for the authenticated user or provider"""
         try:
-            # Get appointments based on user type
+            # Use a simple query that only selects specific fields we know exist
+            safe_fields = [
+                'id', 'service_id', 'consumer_id', 'start_time', 'end_time', 
+                'status', 'notes', 'created_at', 'updated_at'
+            ]
+            
             if request.user.is_authenticated and request.user.user_type == 'provider':
                 # Providers see appointments for their services
-                            appointments = Appointment.objects.filter(
+                appointments = Appointment.objects.filter(
                     service__provider__user=request.user
-                ).order_by('start_time')
+                ).defer('location').order_by('start_time')
+                print(f"Provider view: Found {appointments.count()} appointments")
             elif request.user.is_authenticated:
                 # Consumers see their own appointments
                 appointments = Appointment.objects.filter(
                     consumer=request.user
-                ).order_by('start_time')
+                ).defer('location').order_by('start_time')
+                print(f"Consumer view: Found {appointments.count()} appointments")
             else:
-                # For testing/debugging, return all appointments for unauthenticated users
-                print("WARNING: Returning all appointments for unauthenticated request")
-                appointments = Appointment.objects.all().order_by('start_time')
-        
-            # Serialize appointments
+                # For debugging only - limit to a small number
+                print("WARNING: Unauthenticated request - returning limited appointment set for debugging")
+                appointments = Appointment.objects.all().defer('location').order_by('start_time')[:5]
+                
+            if not appointments:
+                return Response([])  # Return empty list if no appointments found
+            
+            # Serialize appointments to a format the frontend expects
             appointment_list = []
             for appointment in appointments:
-                appointment_data = {
-                    'id': str(appointment.id),  # Ensure UUID is converted to string
-                    'service': {
-                        'id': appointment.service.id,
-                        'name': appointment.service.name,
-                        'duration': appointment.service.duration,
-                        'price': float(appointment.service.price),
-                        'provider': {
-                            'id': appointment.service.provider.id,
-                            'business_name': appointment.service.provider.business_name
-                        }
-                    },
-                    'consumer': {
-                        'id': appointment.consumer.id,
-                        'username': appointment.consumer.username,
-                        'email': appointment.consumer.email
-                    },
-                    'start_time': appointment.start_time.isoformat(),
-                    'end_time': appointment.end_time.isoformat(),
-                    'status': appointment.status,
-                    'notes': appointment.notes,
-                    'created_at': appointment.created_at.isoformat(),
-                    'updated_at': appointment.updated_at.isoformat()
-                }
-                appointment_list.append(appointment_data)
+                try:
+                    service = appointment.service
+                    provider = service.provider
+                    consumer = appointment.consumer
+                    
+                    appointment_data = {
+                        'id': str(appointment.id),
+                        'service': {
+                            'id': service.id,
+                            'name': service.name,
+                            'duration': service.duration,
+                            'price': float(service.price),
+                            'provider': {
+                                'id': provider.id,
+                                'business_name': provider.business_name
+                            }
+                        },
+                        'consumer': {
+                            'id': consumer.id,
+                            'username': consumer.username,
+                            'email': consumer.email
+                        },
+                        'start_time': appointment.start_time.isoformat(),
+                        'end_time': appointment.end_time.isoformat(),
+                        'status': appointment.status,
+                        'notes': appointment.notes,
+                        'created_at': appointment.created_at.isoformat(),
+                        'updated_at': appointment.updated_at.isoformat()
+                    }
+                    appointment_list.append(appointment_data)
+                except Exception as e:
+                    print(f"Error serializing appointment {appointment.id}: {str(e)}")
+                    continue
             
             return Response(appointment_list)
+        
         except Exception as e:
             import traceback
             print(f"Error fetching appointments: {str(e)}")
@@ -1277,6 +1196,10 @@ class AppointmentListAPI(APIView):
         client_phone = request.data.get('client_phone', '')
         client_address = request.data.get('client_address', '')
         
+        # Extract location data if available
+        latitude = request.data.get('latitude')
+        longitude = request.data.get('longitude')
+        
         print(f"DEBUG APPOINTMENT: Extracted data - service_id={service_id}, start_time={start_time}, client_email={client_email}")
         
         # FOR TESTING: Don't require email or authentication
@@ -1315,18 +1238,25 @@ class AppointmentListAPI(APIView):
                 status__in=['pending', 'confirmed', 'completed'],  # Active appointments
             ).exclude(status='cancelled')
             
+            # Note: We don't need location field for overlap checks, so we don't need to select specific fields,
+            # but we're only accessing start_time and end_time from the queryset to avoid issues
+            
             # Check each appointment for overlap with the buffered time range
             conflicts = []
             for appt in overlapping_appointments:
-                # Add buffer around existing appointment
-                appt_buffered_start = appt.start_time - timezone.timedelta(minutes=buffer_minutes)
-                appt_buffered_end = appt.end_time + timezone.timedelta(minutes=buffer_minutes)
-                
-                # If appointment buffered time overlaps with our buffered time, it's a conflict
-                if appt_buffered_end > buffered_start and appt_buffered_start < buffered_end:
-                    conflicts.append(appt)
-                    print(f"DEBUG APPOINTMENT: Conflict with appointment {appt.id} from {appt.start_time} to {appt.end_time}")
-                    print(f"DEBUG APPOINTMENT: Conflict details: Buffered existing appt {appt_buffered_start} to {appt_buffered_end} overlaps with requested time {buffered_start} to {buffered_end}")
+                try:
+                    # Add buffer around existing appointment
+                    appt_buffered_start = appt.start_time - timezone.timedelta(minutes=buffer_minutes)
+                    appt_buffered_end = appt.end_time + timezone.timedelta(minutes=buffer_minutes)
+                    
+                    # If appointment buffered time overlaps with our buffered time, it's a conflict
+                    if appt_buffered_end > buffered_start and appt_buffered_start < buffered_end:
+                        conflicts.append(appt)
+                        print(f"DEBUG APPOINTMENT: Conflict with appointment {appt.id} from {appt.start_time} to {appt.end_time}")
+                        print(f"DEBUG APPOINTMENT: Conflict details: Buffered existing appt {appt_buffered_start} to {appt_buffered_end} overlaps with requested time {buffered_start} to {buffered_end}")
+                except Exception as e:
+                    print(f"DEBUG APPOINTMENT: Error checking appointment {appt.id} for conflicts: {str(e)}")
+                    continue
             
             if conflicts:
                 return Response({
@@ -1371,14 +1301,29 @@ class AppointmentListAPI(APIView):
                 consumer.save()
             
             # Create appointment with original (non-buffered) times
-            appointment = Appointment.objects.create(
-                service=service,
-                consumer=consumer,
-                start_time=start_time,
-                end_time=end_time,
-                notes=notes,
-                status=status
-            )
+            appointment_data = {
+                'service': service,
+                'consumer': consumer,
+                'start_time': start_time,
+                'end_time': end_time,
+                'notes': notes,
+                'status': status
+            }
+            
+            # Add location data if provided
+            if latitude is not None and longitude is not None:
+                try:
+                    float_lat = float(latitude)
+                    float_lng = float(longitude)
+                    appointment_data.update({
+                        'latitude': float_lat,
+                        'longitude': float_lng
+                    })
+                except (ValueError, TypeError):
+                    print(f"DEBUG APPOINTMENT: Invalid coordinates: {latitude}, {longitude}")
+                    # Don't add invalid coordinates
+            
+            appointment = Appointment.objects.create(**appointment_data)
             
             print(f"DEBUG APPOINTMENT: Created appointment {appointment.id} from {appointment.start_time} to {appointment.end_time}")
             
@@ -1421,37 +1366,43 @@ class AppointmentDetailAPI(APIView):
                     'error': f'Invalid UUID format: {str(e)}'
                 }, http_status.HTTP_400_BAD_REQUEST)
         
-            # Get appointment directly without permission check for testing
-            appointment = Appointment.objects.get(id=appointment_id)
+            # Get appointment directly, explicitly selecting only the fields we need
+            appointment = Appointment.objects.filter(id=appointment_id).values(
+                'id', 'start_time', 'end_time', 'status', 'notes', 'created_at', 'updated_at',
+                'service__id', 'service__name', 'service__duration', 'service__price',
+                'service__provider__id', 'service__provider__business_name',
+                'consumer__id', 'consumer__username', 'consumer__email'
+            ).first()
+            
+            if not appointment:
+                return Response({
+                    'error': 'Appointment not found'
+                }, http_status.HTTP_404_NOT_FOUND)
             
             return Response({
-                'id': str(appointment.id),  # Convert UUID to string for JSON
+                'id': str(appointment['id']),  # Convert UUID to string for JSON
                 'service': {
-                    'id': appointment.service.id,
-                    'name': appointment.service.name,
-                    'duration': appointment.service.duration,
-                    'price': float(appointment.service.price),
+                    'id': appointment['service__id'],
+                    'name': appointment['service__name'],
+                    'duration': appointment['service__duration'],
+                    'price': float(appointment['service__price']),
                     'provider': {
-                        'id': appointment.service.provider.id,
-                        'business_name': appointment.service.provider.business_name
+                        'id': appointment['service__provider__id'],
+                        'business_name': appointment['service__provider__business_name']
                     }
                 },
                 'consumer': {
-                    'id': appointment.consumer.id,
-                    'username': appointment.consumer.username,
-                    'email': appointment.consumer.email
+                    'id': appointment['consumer__id'],
+                    'username': appointment['consumer__username'],
+                    'email': appointment['consumer__email']
                 },
-                'start_time': appointment.start_time.isoformat(),
-                'end_time': appointment.end_time.isoformat(),
-                'status': appointment.status,
-                'notes': appointment.notes,
-                'created_at': appointment.created_at.isoformat(),
-                'updated_at': appointment.updated_at.isoformat()
+                'start_time': appointment['start_time'].isoformat(),
+                'end_time': appointment['end_time'].isoformat(),
+                'status': appointment['status'],
+                'notes': appointment['notes'],
+                'created_at': appointment['created_at'].isoformat(),
+                'updated_at': appointment['updated_at'].isoformat()
             })
-        except Appointment.DoesNotExist:
-            return Response({
-                'error': 'Appointment not found'
-            }, http_status.HTTP_404_NOT_FOUND)
         except Exception as e:
             import traceback
             print(f"Error retrieving appointment: {str(e)}")
@@ -1577,23 +1528,37 @@ class AppointmentStatusAPI(APIView):
             }, http_status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Get appointment
-            try:
-                appointment = Appointment.objects.get(id=appointment_id)
-            except Appointment.DoesNotExist:
+            # Convert appointment_id to UUID if it's a string
+            if isinstance(appointment_id, str):
+                try:
+                    appointment_id = uuid.UUID(appointment_id)
+                except ValueError:
+                    return Response({
+                        'error': f'Invalid UUID format: {appointment_id}'
+                    }, http_status.HTTP_400_BAD_REQUEST)
+            
+            # Update status directly without fetching the model first
+            # This avoids the need to load all fields including location
+            updated = Appointment.objects.filter(id=appointment_id).update(
+                status=new_status,
+                updated_at=timezone.now()
+            )
+            
+            if not updated:
                 return Response({
                     'error': 'Appointment not found'
                 }, http_status.HTTP_404_NOT_FOUND)
             
-            # Update status
-            appointment.status = new_status
-            appointment.save()
-            
+            # Return only basic info without fetching the model again
             return Response({
-                'id': appointment.id,
-                'status': appointment.status
+                'id': appointment_id,
+                'status': new_status,
+                'message': f'Appointment status updated to {new_status}'
             })
         except Exception as e:
+            print(f"Error updating appointment status: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
