@@ -1153,7 +1153,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                         Client Information
                                     </Typography>
                                     <Typography variant="body1">
-                                        {selectedAppointment?.consumer?.email || ""}
+                                        {selectedAppointment?.consumer?.username || selectedAppointment?.consumer?.email || "Anonymous"}
                                     </Typography>
                                     {selectedAppointment?.consumer?.phone_number && (
                                         <Typography variant="body2">
