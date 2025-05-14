@@ -63,7 +63,44 @@ const AppointmentCalendar = forwardRef(({ mode,
     
     const [providerAppointments, setProviderAppointments] = useState([]);
     
-    // Define fetch functions before useEffect
+    const fetchUserAppointments = async () => {
+        try {
+            const userStr = localStorage.getItem('user');
+            if (!userStr) {
+                console.log('No user logged in, skipping appointment fetch');
+                return [];
+            }
+
+            console.log('Fetching user appointments');
+            const result = await appointmentsApi.getAll();
+            
+            console.log('User appointments loaded:', result.data.length, 'appointments');
+            if (result.data && result.data.length > 0) {
+                console.log('First appointment:', result.data[0]);
+            }
+            
+            // Update state, but only if data actually changed
+            if (Array.isArray(result.data)) {
+                // Check if the appointments have actually changed to avoid unnecessary rerenders
+                const existingIds = new Set(userAppointments.map(a => a.id));
+                const newAppointments = result.data;
+                
+                // Check if any appointments were added or removed
+                const hasChanges = newAppointments.length !== userAppointments.length || 
+                    newAppointments.some(newAppt => !existingIds.has(newAppt.id));
+                
+                if (hasChanges) {
+                    setUserAppointments(newAppointments);
+                }
+            }
+            
+            return result.data;
+        } catch (err) {
+            console.error('Error fetching user appointments:', err);
+            return [];
+        }
+    };
+    
     const fetchProviderAvailability = async (provId) => {
         try {
             setLoading(true);
@@ -139,27 +176,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             setLoading(false);
         }
     };
-
-    const fetchUserAppointments = async () => {
-        try {
-            const userStr = localStorage.getItem('user');
-            if (!userStr) {
-                console.log('No user logged in, skipping appointment fetch');
-                return;
-            }
-
-            console.log('Fetching user appointments');
-            const result = await appointmentsApi.getAll();
-            
-            console.log('User appointments loaded');
-            setUserAppointments(result.data);
-            return result.data;
-        } catch (err) {
-            console.error('Error fetching user appointments');
-            // Don't set error - this is supplementary data
-            return [];
-        }
-    };
     
     const fetchProviderAppointments = async () => {
         if (mode !== 'provider' || !providerId) return;
@@ -180,19 +196,21 @@ const AppointmentCalendar = forwardRef(({ mode,
     useImperativeHandle(ref, () => ({
         fetchUserAppointments: async () => {
             console.log('Refreshing appointments and availability');
-            // Refresh user appointments first
-            const appointments = await fetchUserAppointments();
-            console.log('Appointments refreshed:', appointments);
             
-            // Also refresh service availability if in consumer mode
+            // First refresh service availability to update available slots
             if (mode === 'consumer' && serviceId) {
                 console.log('Refreshing service availability for service:', serviceId);
                 await fetchServiceAvailability(serviceId);
             }
             
+            // Then refresh appointments
+            const appointments = await fetchUserAppointments();
+            console.log('Appointments refreshed:', appointments?.length || 0);
+            
+            // Return the fetched appointments
             return appointments;
         }
-    }));
+    }), []); // Empty dependency array to avoid recreating this object on every render
     
     // Generate days array (today + next N days)
     useEffect(() => {
@@ -219,7 +237,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             fetchServiceAvailability(serviceId);
             fetchUserAppointments(); // Fetch user's existing appointments
         }
-    }, [mode, providerId, serviceId, daysToShow, initialTimeBlocks]);
+    }, [mode, providerId, serviceId, daysToShow, initialTimeBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
     
     const saveAvailability = async () => {
         if (mode !== 'provider' || !providerId) {
@@ -400,13 +418,25 @@ const AppointmentCalendar = forwardRef(({ mode,
         return timeBlocks[dateStr] || [];
      };
 
-    // Get existing user appointments for a specific day
+    // Get existing user appointments for a specific day - combine both prop appointments and userAppointments
     const getAppointmentsForDay = (day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
-        return appointments.filter(appointment => {
+        // Create a combined array without duplicates
+        const allAppointments = [...appointments];
+        
+        // Add user appointments that aren't already included
+        const appointmentIds = new Set(appointments.map(a => a.id));
+        userAppointments.forEach(userAppt => {
+            if (!appointmentIds.has(userAppt.id)) {
+                allAppointments.push(userAppt);
+            }
+        });
+        
+        // Filter for the current day
+        return allAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
-         });
+        });
     };
     
     // Get provider appointments for a specific day
@@ -543,10 +573,12 @@ const AppointmentCalendar = forwardRef(({ mode,
             setCancelInProgress(true);
             setCancelError('');
             
-            console.log('Cancelling appointment');
+            // Make sure the appointment ID is a string for the API call
+            const appointmentId = selectedAppointment.id.toString();
+            console.log('Cancelling appointment with ID:', appointmentId);
             
             // Call API to update appointment status
-            await appointmentsApi.updateStatus(selectedAppointment.id, 'cancelled');
+            await appointmentsApi.updateStatus(appointmentId, 'cancelled');
             console.log('Appointment cancelled successfully');
             
             setCancelSuccess(true);
@@ -564,13 +596,13 @@ const AppointmentCalendar = forwardRef(({ mode,
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
-             }, 2000);
+            }, 2000);
             
         } catch (err) {
-            console.error('Error cancelling appointment');
+            console.error('Error cancelling appointment:', err);
             setCancelError('Failed to cancel appointment. Please try again.');
             setCancelInProgress(false);
-         }
+        }
     };
     
     // Handle status change for provider appointments
@@ -581,10 +613,12 @@ const AppointmentCalendar = forwardRef(({ mode,
             setCancelInProgress(true);
             setCancelError('');
             
-            console.log(`Updating appointment ${selectedAppointment.id} status to ${newStatus}`);
+            // Ensure ID is treated as a string
+            const appointmentId = selectedAppointment.id.toString();
+            console.log(`Updating appointment ${appointmentId} status to ${newStatus}`);
             
             // Call API to update appointment status
-            await appointmentsApi.updateStatus(selectedAppointment.id, newStatus);
+            await appointmentsApi.updateStatus(appointmentId, newStatus);
             console.log('Appointment status updated successfully');
             
             setCancelSuccess(true);
@@ -611,6 +645,14 @@ const AppointmentCalendar = forwardRef(({ mode,
         const dateStr = format(day, 'yyyy-MM-dd');
         const blocks = timeBlocks[dateStr] || [];
         const dayAppointments = getAppointmentsForDay(day);
+        
+        // Debug logging
+        if (hour === 8) { // Only log once per day to avoid console spam
+            console.log(`Rendering day ${dateStr} with ${dayAppointments.length} appointments and ${blocks.length} blocks`);
+            if (dayAppointments.length > 0) {
+                console.log('Appointments for this day:', dayAppointments);
+            }
+        }
 
         // Find if there's an appointment at this hour
         const appointment = dayAppointments.find(apt => {
@@ -620,10 +662,14 @@ const AppointmentCalendar = forwardRef(({ mode,
             blockStart.setHours(hour, 0, 0);
             const blockEnd = new Date(day);
             blockEnd.setHours(hour + 1, 0, 0);
-            return areIntervalsOverlapping(
+            const overlaps = areIntervalsOverlapping(
                 { start: aptStart, end: aptEnd },
                 { start: blockStart, end: blockEnd }
             );
+            if (overlaps && hour === 8) { // Only log for hour 8 to prevent spam
+                console.log(`Found appointment that overlaps with hour ${hour}:`, apt);
+            }
+            return overlaps;
         });
 
         // Find if there's an availability block at this hour
@@ -771,13 +817,13 @@ const AppointmentCalendar = forwardRef(({ mode,
             mr: 0,
         }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                // Only show title if we're in provider mode or no service is provided
+                {/* Only show title if we're in provider mode or no service is provided */}
                 {(mode === 'provider' || !service) && (
                     <Typography variant="h6" sx={{ fontSize: '1rem' }}>
                         {title || (mode === 'provider' ? 'Your Availability' : '')}
                     </Typography>
                 )}
-                // Empty space div to maintain layout when title is hidden
+                {/* Empty space div to maintain layout when title is hidden */}
                 {mode === 'consumer' && service && (
                     <div></div>
                 )}

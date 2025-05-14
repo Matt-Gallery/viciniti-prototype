@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
     Box,
     Typography,
@@ -26,6 +26,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 const ServiceBrowser = () => {
     const navigate = useNavigate();
+    const calendarRefs = useRef({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [serviceList, setServiceList] = useState([]);
@@ -108,85 +109,93 @@ const ServiceBrowser = () => {
     const handleBlockClick = (service, block) => {
         console.log('Selected service');
         console.log('Selected time block');
-        console.log('Block start');
-        console.log('Block end');
         
         setSelectedService(service);
         setSelectedSlot(block);
-        
-        // Initialize with empty values
-        const initialBookingData = {
-            email: '',
-            phone: '',
-            address_line1: '',
-            address_line2: '',
-            city: '',
-            state: '',
-            zip_code: '',
-            notes: ''
-        };
         
         // Pre-populate with user data if available
         const userStr = localStorage.getItem('user');
         if (userStr) {
             try {
                 const userData = JSON.parse(userStr);
+                console.log('User data from localStorage:', userData);
                 
-                // Set email from user data
-                initialBookingData.email = userData.email || '';
+                // Initialize booking data with user information
+                const initialData = {
+                    email: userData.email || '',
+                    // IMPORTANT: Map from backend phone_number field to our phone field
+                    phone: userData.phone_number || '',
+                    // Map address fields correctly
+                    address_line1: userData.street_address || '',
+                    address_line2: userData.apartment || '',
+                    city: userData.city || '',
+                    state: userData.state || '',
+                    zip_code: userData.zip_code || '',
+                    notes: ''
+                };
                 
-                // Set phone from user data
-                initialBookingData.phone = userData.phone_number || '';
-                
-                // Set address fields from userData properties if they exist
-                if (userData.street_address) initialBookingData.address_line1 = userData.street_address;
-                if (userData.apartment) initialBookingData.address_line2 = userData.apartment;
-                if (userData.city) initialBookingData.city = userData.city;
-                if (userData.state) initialBookingData.state = userData.state;
-                if (userData.zip_code) initialBookingData.zip_code = userData.zip_code;
-                
-                // If the new fields aren't available, try to parse from the legacy address field
-                if (userData.address && (!userData.street_address && !userData.city)) {
-                    const addressLines = userData.address.split(/,|\n/).map(line => line.trim());
+                // If we don't have the new address fields, try to parse from the legacy address field
+                if (userData.address && (!userData.street_address || !userData.city)) {
+                    console.log('Parsing from legacy address:', userData.address);
+                    const addressLines = userData.address.split(/\n|,/).map(line => line.trim());
                     
                     if (addressLines.length >= 1) {
-                        initialBookingData.address_line1 = addressLines[0] || '';
+                        initialData.address_line1 = addressLines[0] || '';
                     }
                     
                     if (addressLines.length >= 2) {
                         // Check if second line looks like an apartment/suite
-                        if (addressLines[1].toLowerCase().includes('apt') || 
+                        if (addressLines[1] && (
+                            addressLines[1].toLowerCase().includes('apt') || 
                             addressLines[1].toLowerCase().includes('suite') || 
-                            addressLines[1].toLowerCase().includes('#')) {
-                            initialBookingData.address_line2 = addressLines[1] || '';
+                            addressLines[1].toLowerCase().includes('#')
+                        )) {
+                            initialData.address_line2 = addressLines[1];
                             
                             // If we have more lines, try to parse city, state, zip
                             if (addressLines.length >= 3) {
-                                const cityStateZip = addressLines[2].split(/,|\s+/);
-                                initialBookingData.city = cityStateZip[0] || '';
-                                initialBookingData.state = cityStateZip.length > 1 ? cityStateZip[1] : '';
-                                initialBookingData.zip_code = cityStateZip.length > 2 ? cityStateZip[2] : '';
+                                const cityStateZip = addressLines[2].split(/\s+/);
+                                if (cityStateZip.length >= 1) initialData.city = cityStateZip[0];
+                                if (cityStateZip.length >= 2) initialData.state = cityStateZip[1];
+                                if (cityStateZip.length >= 3) initialData.zip_code = cityStateZip[2];
                             }
                         } else {
                             // Assume it's city, state, zip
-                            const cityStateZip = addressLines[1].split(/,|\s+/);
-                            initialBookingData.city = cityStateZip[0] || '';
-                            initialBookingData.state = cityStateZip.length > 1 ? cityStateZip[1] : '';
-                            initialBookingData.zip_code = cityStateZip.length > 2 ? cityStateZip[2] : '';
+                            const cityStateZip = addressLines[1].split(/\s+/);
+                            if (cityStateZip.length >= 1) initialData.city = cityStateZip[0];
+                            if (cityStateZip.length >= 2) initialData.state = cityStateZip[1];
+                            if (cityStateZip.length >= 3) initialData.zip_code = cityStateZip[2];
                         }
                     }
                 }
                 
-                // Set the booking data with all the populated fields
-                setBookingData(initialBookingData);
-                
+                console.log('Pre-populating form with data:', initialData);
+                setBookingData(initialData);
             } catch (e) {
-                console.error('Error parsing user data');
-                setBookingData(initialBookingData);
+                console.error('Error parsing user data', e);
+                setBookingData({
+                    email: '',
+                    phone: '',
+                    address_line1: '',
+                    address_line2: '',
+                    city: '',
+                    state: '',
+                    zip_code: '',
+                    notes: ''
+                });
             }
         } else {
-            // No user data available
-            setBookingData(initialBookingData);
+            console.log('No user data found in localStorage');
+            setBookingData({
+                email: '',
+                phone: '',
+                address_line1: '',
+                address_line2: '',
+                city: '',
+                state: '',
+                zip_code: '',
+                notes: ''
+            });
         }
         
         setBookingDialogOpen(true);
@@ -286,12 +295,18 @@ const ServiceBrowser = () => {
             setBookingSuccess(true);
             setBookingInProgress(false);
             
-            // After success, close dialog after 2 seconds
+            // After success, close dialog after 2 seconds and refresh the calendar
             setTimeout(() => {
                 setBookingDialogOpen(false);
                 setBookingSuccess(false);
                 setSelectedService(null);
                 setSelectedSlot(null);
+                
+                // Refresh the calendar for this service
+                if (calendarRefs.current[selectedService.id]) {
+                    console.log('Refreshing calendar after booking');
+                    calendarRefs.current[selectedService.id].fetchUserAppointments();
+                }
             }, 2000);
             
         } catch (error) {
@@ -429,6 +444,7 @@ const ServiceBrowser = () => {
                                                     </Typography>
                                                     <Box sx={{ height: '450px', width: '100%', overflow: 'hidden' }}>
                                                         <AppointmentCalendar
+                                                            ref={el => calendarRefs.current[service.id] = el}
                                                             mode="consumer"
                                                             serviceId={service.id}
                                                             service={service}

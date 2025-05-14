@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, re_path
 from . import views
 from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.decorators import api_view, permission_classes
@@ -27,10 +27,13 @@ urlpatterns = [
     path('services/provider/<int:provider_id>/', views.ProviderServiceListAPI.as_view(), name='api_provider_services'),
     path('services/<int:service_id>/availability/', views.ServiceAvailabilityAPI.as_view(), name='api_service_availability'),
     
-    # Appointment endpoints
+    # Appointment endpoints - Updated to support UUID format
     path('appointments/', views.AppointmentListAPI.as_view(), name='api_appointment_list'),
-    path('appointments/<int:appointment_id>/', views.AppointmentDetailAPI.as_view(), name='api_appointment_detail'),
-    path('appointments/<int:appointment_id>/status/', views.AppointmentStatusAPI.as_view(), name='api_appointment_status'),
+    # Use regex pattern for UUID: 8-4-4-4-12 hexadecimal format
+    re_path(r'^appointments/(?P<appointment_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/$', 
+            views.AppointmentDetailAPI.as_view(), name='api_appointment_detail'),
+    re_path(r'^appointments/(?P<appointment_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/status/$', 
+            views.AppointmentStatusAPI.as_view(), name='api_appointment_status'),
     path('appointments/provider/<int:provider_id>/', views.ProviderAppointmentListAPI.as_view(), name='api_provider_appointments'),
     path('appointments/consumer/<int:consumer_id>/', views.ConsumerAppointmentListAPI.as_view(), name='api_consumer_appointments'),
 ] 
