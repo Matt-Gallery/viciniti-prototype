@@ -564,6 +564,40 @@ class UserProfileAPI(APIView):
             'state': user.state,
             'zip_code': user.zip_code
         })
+        
+    def delete(self, request):
+        """Delete the user account"""
+        if not request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required'
+            }, http_status.HTTP_401_UNAUTHORIZED)
+        
+        user = request.user
+        
+        try:
+            # Delete the user's appointments
+            from .models import Appointment
+            Appointment.objects.filter(consumer=user).delete()
+            
+            # Delete the user's provider profile if it exists
+            if hasattr(user, 'provider_profile'):
+                user.provider_profile.delete()
+            
+            # Delete the user's auth token
+            from rest_framework.authtoken.models import Token
+            Token.objects.filter(user=user).delete()
+            
+            # Finally, delete the user
+            user.delete()
+            
+            return Response({
+                'message': 'Account deleted successfully'
+            }, http_status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Failed to delete account: {str(e)}'
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class PasswordChangeAPI(APIView):
     def put(self, request):
