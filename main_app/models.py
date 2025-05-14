@@ -4,6 +4,8 @@ from django.utils import timezone
 # Restore GeoDjango imports
 from django.contrib.gis.db import models as gis_models
 from django.contrib.gis.geos import Point
+from django.contrib.gis.measure import Distance as GeoDistance
+from django.contrib.gis.db.models.functions import Distance
 from django.core.validators import MinValueValidator, MaxValueValidator
 import uuid
 
@@ -59,6 +61,26 @@ class ServiceProvider(models.Model):
         if self.latitude is not None and self.longitude is not None:
             self.location = Point(self.longitude, self.latitude, srid=4326)
         super().save(*args, **kwargs)
+        
+    @classmethod
+    def get_nearby_providers(cls, lat, lng, radius_miles=25):
+        """Find nearby service providers within a given radius"""
+        if not lat or not lng:
+            return cls.objects.none()
+            
+        user_location = Point(lng, lat, srid=4326)
+        
+        # Convert miles to meters (1 mile = 1609.34 meters)
+        radius_meters = radius_miles * 1609.34
+        
+        # Query providers within the radius, annotated with distance
+        nearby_providers = cls.objects.filter(
+            location__distance_lte=(user_location, GeoDistance(m=radius_meters))
+        ).annotate(
+            distance=Distance('location', user_location)
+        ).order_by('distance')
+        
+        return nearby_providers
 
 SERVICE_CATEGORIES = (
     ('beauty_hair', 'Beauty - Hair'),
@@ -142,6 +164,39 @@ class Service(models.Model):
 
     def __str__(self):
         return self.name
+        
+    @classmethod
+    def get_nearby_services(cls, lat, lng, radius_miles=25, category=None):
+        """Find nearby services within a given radius, optionally filtered by category"""
+        if not lat or not lng:
+            return cls.objects.none()
+            
+        user_location = Point(lng, lat, srid=4326)
+        
+        # Convert miles to meters (1 mile = 1609.34 meters)
+        radius_meters = radius_miles * 1609.34
+        
+        # Base query for services with providers that have locations
+        query = cls.objects.select_related('provider').filter(
+            provider__location__isnull=False,
+            is_active=True
+        )
+        
+        # Filter by distance
+        query = query.filter(
+            provider__location__distance_lte=(user_location, GeoDistance(m=radius_meters))
+        )
+        
+        # Filter by category if provided
+        if category:
+            query = query.filter(category=category)
+        
+        # Annotate with distance and order by distance
+        query = query.annotate(
+            distance=Distance('provider__location', user_location)
+        ).order_by('distance')
+        
+        return query
 
 class Appointment(models.Model):
     STATUS_CHOICES = (
@@ -201,6 +256,37 @@ class Appointment(models.Model):
             self.final_price = self.original_price
             
         super().save(*args, **kwargs)
+        
+    @classmethod
+    def get_nearby_appointments(cls, lat, lng, radius_miles=1, provider=None):
+        """Find nearby appointments within a given radius for discounting purposes"""
+        if not lat or not lng:
+            return cls.objects.none()
+            
+        user_location = Point(lng, lat, srid=4326)
+        
+        # Convert miles to meters (1 mile = 1609.34 meters)
+        radius_meters = radius_miles * 1609.34
+        
+        # Base query
+        query = cls.objects.filter(
+            location__isnull=False,
+            status__in=['confirmed', 'pending'],
+            start_time__gt=timezone.now()
+        )
+        
+        # If provider is specified, limit to their appointments
+        if provider:
+            query = query.filter(service__provider=provider)
+        
+        # Filter by distance and annotate with distance
+        query = query.filter(
+            location__distance_lte=(user_location, GeoDistance(m=radius_meters))
+        ).annotate(
+            distance=Distance('location', user_location)
+        ).order_by('distance')
+        
+        return query
 
 class ProviderAvailability(models.Model):
     provider = models.ForeignKey('ServiceProvider', on_delete=models.CASCADE, related_name='availabilities')

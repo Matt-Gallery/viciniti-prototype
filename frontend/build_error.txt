@@ -1,0 +1,12 @@
+
+> frontend@0.1.0 build
+> react-scripts build
+
+Creating an optimized production build...
+Failed to compile.
+
+[eslint] 
+src/components/common/AppointmentCalendar.jsx
+Syntax error: Adjacent JSX elements must be wrapped in an enclosing tag. Did you want a JSX fragment <>...</>? (1569:24) (1569:24)
+
+

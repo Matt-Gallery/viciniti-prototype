@@ -79,6 +79,16 @@ WSGI_APPLICATION = 'viciniti.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# For development, use SQLite with SpatiaLite for easier setup
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.contrib.gis.db.backends.spatialite',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+
+# When you're ready to use PostGIS, uncomment the below configuration
+# and comment out the SQLite configuration above
 DATABASES = {
     'default': {
         'ENGINE': 'django.contrib.gis.db.backends.postgis',
@@ -90,18 +100,9 @@ DATABASES = {
     }
 }
 
-# PostgreSQL configuration with PostGIS
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.contrib.gis.db.backends.postgis',
-#         'NAME': 'viciniti',
-#         'USER': 'postgres',  # Change to your PostgreSQL username
-#         'PASSWORD': 'newpassword',  # Updated password
-#         'HOST': 'localhost',
-#         'PORT': '5432',
-#     }
-# }
-
+# GIS configuration
+GDAL_LIBRARY_PATH = None
+GEOS_LIBRARY_PATH = None
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -207,3 +208,8 @@ LOGGING = {
         },
     },
 }
+
+# GeoDjango settings
+# Default geocoding center point (can be overridden by user location)
+DEFAULT_LATITUDE = 37.7749  # San Francisco
+DEFAULT_LONGITUDE = -122.4194
