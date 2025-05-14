@@ -14,6 +14,21 @@ def update_appointment_ids(apps, schema_editor):
     # Update IDs with UUIDs
     for appointment in appointments:
         appointment.id = uuid.uuid4()
+        # Add default values for NOT NULL fields to prevent errors
+        if appointment.address_line1 is None:
+            appointment.address_line1 = ''
+        if appointment.address_line2 is None:
+            appointment.address_line2 = ''
+        if appointment.city is None:
+            appointment.city = ''
+        if appointment.state is None:
+            appointment.state = ''
+        if appointment.zip_code is None:
+            appointment.zip_code = ''
+        if appointment.postal_code is None:
+            appointment.postal_code = ''
+        if appointment.country is None:
+            appointment.country = 'United States'
         appointment.save()
 
 class Migration(migrations.Migration):
@@ -23,7 +38,31 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # First manually alter ID field to allow UUIDs
+        # First make address fields nullable to avoid constraints
+        migrations.RunSQL(
+            sql="""
+            ALTER TABLE main_app_appointment 
+            ALTER COLUMN address_line1 DROP NOT NULL,
+            ALTER COLUMN address_line2 DROP NOT NULL,
+            ALTER COLUMN city DROP NOT NULL,
+            ALTER COLUMN state DROP NOT NULL,
+            ALTER COLUMN postal_code DROP NOT NULL,
+            ALTER COLUMN zip_code DROP NOT NULL,
+            ALTER COLUMN country DROP NOT NULL;
+            """,
+            reverse_sql="""
+            ALTER TABLE main_app_appointment 
+            ALTER COLUMN address_line1 SET NOT NULL,
+            ALTER COLUMN address_line2 SET NOT NULL,
+            ALTER COLUMN city SET NOT NULL,
+            ALTER COLUMN state SET NOT NULL,
+            ALTER COLUMN postal_code SET NOT NULL,
+            ALTER COLUMN zip_code SET NOT NULL,
+            ALTER COLUMN country SET NOT NULL;
+            """
+        ),
+        
+        # Then alter ID field to allow UUIDs
         migrations.RunSQL(
             sql="""
             ALTER TABLE main_app_appointment 

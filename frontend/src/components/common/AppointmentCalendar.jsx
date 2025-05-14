@@ -1,7 +1,6 @@
 import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { Box, 
     Typography, 
-    Paper, 
     Button, 
     Dialog,
     DialogTitle,
@@ -11,16 +10,12 @@ import { Box,
     TextField,
     CircularProgress,
     Alert,
-    IconButton,
     Chip,
-    Divider,
-    Tooltip,
-     } from '@mui/material';
+} from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format, addDays, areIntervalsOverlapping } from 'date-fns';
 import AddIcon from '@mui/icons-material/Add';
-import DeleteIcon from '@mui/icons-material/Delete';
 import { availability as availabilityApi, appointments as appointmentsApi } from '../../services/api';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
@@ -210,7 +205,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Return the fetched appointments
             return appointments;
         }
-    }), []); // Empty dependency array to avoid recreating this object on every render
+    }), [fetchUserAppointments, fetchServiceAvailability, mode, serviceId]); // Added missing dependencies
     
     // Generate days array (today + next N days)
     useEffect(() => {
@@ -262,7 +257,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             });
             
             console.log('Sending API availability data');
-            const response = await availabilityApi.save(providerId, apiAvailability);
+            await availabilityApi.save(providerId, apiAvailability);
             console.log('API response from saving availability');
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
@@ -547,12 +542,13 @@ const AppointmentCalendar = forwardRef(({ mode,
     
     // Handle provider appointment click
     const handleProviderAppointmentClick = (appointment) => {
+        console.log('Provider clicked on appointment:', appointment);
         if (mode === 'provider') {
             setSelectedAppointment(appointment);
             setCancelError('');
             setCancelSuccess(false);
             setAppointmentDetailsOpen(true);
-         }
+        }
     };
     
     // Handle appointment click to show details
@@ -627,14 +623,20 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Refresh provider appointments
             await fetchProviderAppointments();
             
+            // If the appointment was marked as cancelled, refresh availability to show the slot as available again
+            if (newStatus === 'cancelled' && providerId) {
+                console.log('Refreshing provider availability after cancellation');
+                await fetchProviderAvailability(providerId);
+            }
+            
             // Close modal after short delay
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
-             }, 2000);
+            }, 2000);
             
         } catch (err) {
-            console.error('Error updating appointment status');
+            console.error('Error updating appointment status:', err);
             setCancelError(`Failed to update appointment status to ${newStatus}. Please try again.`);
             setCancelInProgress(false);
         }
@@ -728,7 +730,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 appointment.status === 'completed' ? '#b8daff' : '#90caf9',
                         }
                     }}
-                    onClick={() => handleAppointmentClick(appointment)}
+                    onClick={() => {
+                        if (mode === 'provider') {
+                            handleProviderAppointmentClick(appointment);
+                        } else {
+                            handleAppointmentClick(appointment);
+                        }
+                    }}
                 >
                     <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
                         {format(startTime, 'h:mm a')} - {format(endTime, 'h:mm a')}
@@ -1234,9 +1242,34 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             Phone: {selectedAppointment.consumer.phone_number}
                                         </Typography>
                                     )}
-                                    {selectedAppointment?.consumer?.address && (
+                                    
+                                    {/* Updated address section to show detailed address fields */}
+                                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5 }}>
+                                        Address:
+                                    </Typography>
+                                    {selectedAppointment?.address_line1 && (
                                         <Typography variant="body2">
-                                            Address: {selectedAppointment.consumer.address}
+                                            {selectedAppointment.address_line1}
+                                        </Typography>
+                                    )}
+                                    {selectedAppointment?.address_line2 && (
+                                        <Typography variant="body2">
+                                            {selectedAppointment.address_line2}
+                                        </Typography>
+                                    )}
+                                    {(selectedAppointment?.city || selectedAppointment?.state || selectedAppointment?.zip_code) && (
+                                        <Typography variant="body2">
+                                            {[
+                                                selectedAppointment.city, 
+                                                selectedAppointment.state, 
+                                                selectedAppointment.zip_code
+                                            ].filter(Boolean).join(', ')}
+                                        </Typography>
+                                    )}
+                                    {/* Fallback to legacy address field if detailed fields aren't available */}
+                                    {!selectedAppointment?.address_line1 && selectedAppointment?.consumer?.address && (
+                                        <Typography variant="body2">
+                                            {selectedAppointment.consumer.address}
                                         </Typography>
                                     )}
                                 </Box>
