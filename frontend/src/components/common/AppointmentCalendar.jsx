@@ -31,6 +31,9 @@ const AppointmentCalendar = forwardRef(({ mode,
     serviceId,
     service,
     initialTimeBlocks,
+    appointments = [],
+    loading: appointmentsLoading,
+    error: appointmentsError,
     daysToShow = 5,
     title
 }, ref) => {
@@ -399,7 +402,7 @@ const AppointmentCalendar = forwardRef(({ mode,
     // Get existing user appointments for a specific day
     const getAppointmentsForDay = (day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
-        return userAppointments.filter(appointment => {
+        return appointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
         });
@@ -602,6 +605,140 @@ const AppointmentCalendar = forwardRef(({ mode,
         }
     };
     
+    // Update the block rendering to include appointments
+    const renderTimeBlock = (day, hour) => {
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const blocks = timeBlocks[dateStr] || [];
+        const dayAppointments = getAppointmentsForDay(day);
+
+        // Find if there's an appointment at this hour
+        const appointment = dayAppointments.find(apt => {
+            const aptStart = new Date(apt.start_time);
+            const aptEnd = new Date(apt.end_time);
+            const blockStart = new Date(day);
+            blockStart.setHours(hour, 0, 0);
+            const blockEnd = new Date(day);
+            blockEnd.setHours(hour + 1, 0, 0);
+            return areIntervalsOverlapping(
+                { start: aptStart, end: aptEnd },
+                { start: blockStart, end: blockEnd }
+            );
+        });
+
+        // Find if there's an availability block at this hour
+        const block = blocks.find(block => {
+            const blockStart = new Date(block.start);
+            const blockEnd = new Date(block.end);
+            const hourStart = new Date(day);
+            hourStart.setHours(hour, 0, 0);
+            const hourEnd = new Date(day);
+            hourEnd.setHours(hour + 1, 0, 0);
+            return areIntervalsOverlapping(
+                { start: blockStart, end: blockEnd },
+                { start: hourStart, end: hourEnd }
+            );
+        });
+
+        if (appointment) {
+            const startTime = new Date(appointment.start_time);
+            const endTime = new Date(appointment.end_time);
+            const startMinutes = startTime.getHours() * 60 + startTime.getMinutes();
+            const endMinutes = endTime.getHours() * 60 + endTime.getMinutes();
+            
+            // Calculate position and height based on exact start and end times
+            const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
+            const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
+
+            return (
+                <Box
+                    key={`${dateStr}-${appointment.id}`}
+                    sx={{
+                        position: 'absolute',
+                        top: `${top}px`,
+                        height: `${height}px`,
+                        left: 0,
+                        right: 0,
+                        backgroundColor: appointment.status === 'pending' ? '#fff3cd' :
+                            appointment.status === 'confirmed' ? '#d4edda' :
+                            appointment.status === 'cancelled' ? '#f8d7da' :
+                            appointment.status === 'completed' ? '#cce5ff' : '#e3f2fd',
+                        border: '1px solid',
+                        borderColor: appointment.status === 'pending' ? '#ffeeba' :
+                            appointment.status === 'confirmed' ? '#c3e6cb' :
+                            appointment.status === 'cancelled' ? '#f5c6cb' :
+                            appointment.status === 'completed' ? '#b8daff' : '#90caf9',
+                        borderRadius: '4px',
+                        padding: '2px 4px',
+                        fontSize: '0.75rem',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        cursor: 'pointer',
+                        zIndex: 2,
+                        '&:hover': {
+                            backgroundColor: appointment.status === 'pending' ? '#ffeeba' :
+                                appointment.status === 'confirmed' ? '#c3e6cb' :
+                                appointment.status === 'cancelled' ? '#f5c6cb' :
+                                appointment.status === 'completed' ? '#b8daff' : '#90caf9',
+                        }
+                    }}
+                    onClick={() => handleAppointmentClick(appointment)}
+                >
+                    <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
+                        {format(startTime, 'h:mm a')} - {format(endTime, 'h:mm a')}
+                    </Typography>
+                    <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block' }}>
+                        {appointment.service.name} - {appointment.consumer.username}
+                    </Typography>
+                </Box>
+            );
+        } else if (block) {
+            const startMinutes = block.start.getHours() * 60 + block.start.getMinutes();
+            const endMinutes = block.end.getHours() * 60 + block.end.getMinutes();
+            
+            // Calculate position and height based on exact start and end times
+            const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
+            const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
+
+            return (
+                <Box
+                    key={`${dateStr}-${block.id}`}
+                    sx={{
+                        position: 'absolute',
+                        top: `${top}px`,
+                        height: `${height}px`,
+                        left: 0,
+                        right: 0,
+                        backgroundColor: '#e3f2fd',
+                        border: '1px solid #90caf9',
+                        borderRadius: '4px',
+                        padding: '2px 4px',
+                        fontSize: '0.75rem',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        cursor: mode === 'provider' ? 'pointer' : 'default',
+                        zIndex: 1,
+                        '&:hover': {
+                            backgroundColor: '#bbdefb',
+                            borderColor: '#1976d2',
+                        }
+                    }}
+                    onClick={() => mode === 'provider' && handleBlockClick(block)}
+                >
+                    <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
+                        {format(block.start, 'h:mm a')} - {format(block.end, 'h:mm a')}
+                    </Typography>
+                    <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block' }}>
+                        Available
+                    </Typography>
+                </Box>
+            );
+        }
+
+        return null;
+    };
+    
     if (loading && Object.keys(timeBlocks).length === 0) {
         return (
             <Box display="flex" justifyContent="center" alignItems="center" height="400px">
@@ -656,6 +793,18 @@ const AppointmentCalendar = forwardRef(({ mode,
                 <Alert severity="success" sx={{ mb: 2, py: 1, fontSize: '0.75rem' }}>
                     Availability saved successfully
                 </Alert>
+            )}
+            
+            {appointmentsError && (
+                <Alert severity="error" sx={{ mb: 2, py: 1, fontSize: '0.75rem' }}>
+                    {appointmentsError}
+                </Alert>
+            )}
+            
+            {appointmentsLoading && (
+                <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 1000 }}>
+                    <CircularProgress size={24} />
+                </Box>
             )}
             
             <Box sx={{ display: 'flex', flexDirection: 'row', flex: 1, overflow: 'hidden', width: '100%' }}>
@@ -798,131 +947,18 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             ))}
                                             
                                             { /* Time blocks for available slots */ }
-                                            {getBlocksForDay(day).map((block) => (
-                                                <Box 
-                                                    key={block.id} 
-                                                    sx={getBlockStyle(block)}
-                                                    onClick={() => handleBlockClick(block)}
-                                                >
-                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center'   }}>
-                                                        <Typography variant="caption" fontWeight="bold" sx={{ fontSize: '0.7rem'   }}>
-                                                            {format(block.start, 'h:mm a')}
-                                                        </Typography>
-                                                        {mode === 'consumer' && service && (
-                                                            <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'primary.main'   }}>
-                                                                ${service.price}
-                                                            </Typography>
-                                                        )}
-                                                        {mode === 'provider' && (
-                                                            <IconButton 
-                                                                size="small"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    handleDeleteBlock(day, block.id);
-                                                                }}
-                                                                sx={{ p: 0, color: 'rgba(0, 0, 0, 0.5)'   }}
-                                                            >
-                                                                <DeleteIcon sx={{ fontSize: '0.9rem'   }} />
-                                                            </IconButton>
-                                                        )}
-                                                    </Box>
-                                                </Box>
-                                            ))}
-
-                                            { /* Render existing user appointments in consumer mode */ }
-                                            {mode === 'consumer' && getAppointmentsForDay(day).map((appointment) => {
-                                                const startTime = new Date(appointment.start_time);
-                                                const endTime = new Date(appointment.end_time);
-                                                const apptBlock = {
-                                                    id: `booked-${appointment.id}`,
-                                                    start: startTime,
-                                                    end: endTime
-                                                };
-                                                
-                                                return (
-                                                    <Box 
-                                                        key={apptBlock.id} 
-                                                        sx={getBlockStyle(apptBlock, true)}
-                                                        onClick={() => handleAppointmentClick(appointment)}
-                                                    >
-                                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', top: '-2px' }}>
-                                                            <Typography variant="caption" fontWeight="bold" sx={{ fontSize: '0.7rem' }}>
-                                                                {format(startTime, 'h:mm a')}
-                                                            </Typography>
-                                                            <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'primary.main' }}>
-                                                                ${appointment.service.price}
-                                                            </Typography>
-                                                        </Box>
-                                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: '-5px', position: 'relative', top: '-1px' }}>
-                                                            <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
-                                                                {appointment.service.name}
-                                                            </Typography>
-                                                            <Chip 
-                                                                label={appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}
-                                                                size="small"
-                                                                color={appointment.status === 'confirmed' ? 'success' :
-                                                                    appointment.status === 'pending' ? 'warning' :
-                                                                    appointment.status === 'cancelled' ? 'error' : 'default'
-                                                            }
-                                                                sx={{ height: '16px', 
-                                                                    fontSize: '0.6rem',
-                                                                    maxWidth: '70%'
-                                                                }}
-                                                            />
-                                                        </Box>
-                                                    </Box>
-                                                );
-                                            })}
-                                            
-                                            {/* Render provider's appointments in provider mode */}
-                                            {mode === 'provider' && getProviderAppointmentsForDay(day).map((appointment) => {
-                                                const startTime = new Date(appointment.start_time);
-                                                const endTime = new Date(appointment.end_time);
-                                                const apptBlock = {
-                                                    id: `provider-appt-${appointment.id}`,
-                                                    start: startTime,
-                                                    end: endTime
-                                                };
-                                                
-                                                return (
-                                                    <Tooltip 
-                                                        title={`${appointment.service.name} - ${appointment.consumer.email || "Anonymous client"} (${appointment.status})`}
-                                                        key={apptBlock.id}
-                                                    >
-                                                        <Box 
-                                                            sx={getBlockStyle(apptBlock, false, appointment)}
-                                                            onClick={() => handleProviderAppointmentClick(appointment)}
-                                                        >
-                                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', top: '-2px' }}>
-                                                                <Typography variant="caption" fontWeight="bold" sx={{ fontSize: '0.7rem' }}>
-                                                                    {format(startTime, 'h:mm a')}
-                                                                </Typography>
-                                                                <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'primary.main' }}>
-                                                                    ${appointment.service.price}
-                                                                </Typography>
-                                                            </Box>
-                                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: '-5px', position: 'relative', top: '-1px' }}>
-                                                                <Typography variant="caption" sx={{ fontSize: '0.7rem' }} noWrap>
-                                                                    {appointment.service.name}
-                                                                </Typography>
-                                                                <Chip 
-                                                                    label={
-                                                                        selectedAppointment?.status 
-                                                                            ? selectedAppointment.status.charAt(0).toUpperCase() + selectedAppointment.status.slice(1)
-                                                                            : ""
-                                                                    }
-                                                                    size="small"
-                                                                    sx={{ 
-                                                                        height: '16px', 
-                                                                        fontSize: '0.6rem',
-                                                                        maxWidth: '70%'
-                                                                    }}
-                                                                />
-                                                            </Box>
-                                                        </Box>
-                                                    </Tooltip>
-                                                );
-                                            })}
+                                            {renderTimeBlock(day, 8)}
+                                            {renderTimeBlock(day, 9)}
+                                            {renderTimeBlock(day, 10)}
+                                            {renderTimeBlock(day, 11)}
+                                            {renderTimeBlock(day, 12)}
+                                            {renderTimeBlock(day, 13)}
+                                            {renderTimeBlock(day, 14)}
+                                            {renderTimeBlock(day, 15)}
+                                            {renderTimeBlock(day, 16)}
+                                            {renderTimeBlock(day, 17)}
+                                            {renderTimeBlock(day, 18)}
+                                            {renderTimeBlock(day, 19)}
                                         </Box>
                                     </Box>
                                 );
@@ -1043,51 +1079,33 @@ const AppointmentCalendar = forwardRef(({ mode,
                     </Typography>
                     <Box sx={{ display: 'flex', mt: 2, flexWrap: 'wrap', gap: 2 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box component="span" sx={{ width: 12, 
-                                height: 12, 
-                                backgroundColor: '#bbdefb', 
-                                display: 'inline-block', 
-                                mr: 1, 
-                                border: '1px solid #90caf9' 
-                            }}></Box>
+                            <Box component="span" sx={{ width: 12, height: 12, backgroundColor: '#e3f2fd', display: 'inline-block', mr: 1, border: '1px solid #90caf9' }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Available Blocks
                             </Typography>
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box component="span" sx={{ width: 12, 
-                                height: 12, 
-                                backgroundColor: '#d4edda', 
-                                display: 'inline-block', 
-                                mr: 1, 
-                                border: '1px solid #c3e6cb' 
-                            }}></Box>
-                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                                Confirmed
-                            </Typography>
-                        </Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box component="span" sx={{ width: 12, 
-                                height: 12, 
-                                backgroundColor: '#fff3cd', 
-                                display: 'inline-block', 
-                                mr: 1, 
-                                border: '1px solid #ffeeba' 
-                            }}></Box>
+                            <Box component="span" sx={{ width: 12, height: 12, backgroundColor: '#fff3cd', display: 'inline-block', mr: 1, border: '1px solid #ffeeba' }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Pending
                             </Typography>
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box component="span" sx={{ width: 12, 
-                                height: 12, 
-                                backgroundColor: '#f8d7da', 
-                                display: 'inline-block', 
-                                mr: 1, 
-                                border: '1px solid #f5c6cb' 
-                            }}></Box>
+                            <Box component="span" sx={{ width: 12, height: 12, backgroundColor: '#d4edda', display: 'inline-block', mr: 1, border: '1px solid #c3e6cb' }}></Box>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                                Confirmed
+                            </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box component="span" sx={{ width: 12, height: 12, backgroundColor: '#f8d7da', display: 'inline-block', mr: 1, border: '1px solid #f5c6cb' }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Cancelled
+                            </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box component="span" sx={{ width: 12, height: 12, backgroundColor: '#cce5ff', display: 'inline-block', mr: 1, border: '1px solid #b8daff' }}></Box>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                                Completed
                             </Typography>
                         </Box>
                     </Box>
