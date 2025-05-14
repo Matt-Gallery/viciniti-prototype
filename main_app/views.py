@@ -414,6 +414,71 @@ class ServiceDetailAPI(APIView):
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def put(self, request, service_id):
+        """Update service by ID"""
+        try:
+            # Check if user is authenticated
+            if not request.user.is_authenticated:
+                return Response({
+                    'error': 'Authentication required'
+                }, http_status.HTTP_401_UNAUTHORIZED)
+            
+            # Check if user is a provider
+            if request.user.user_type != 'provider':
+                return Response({
+                    'error': 'Only service providers can update services'
+                }, http_status.HTTP_403_FORBIDDEN)
+                
+            from .models import Service
+            try:
+                # Get the service and check if it belongs to this provider
+                service = Service.objects.get(id=service_id, provider__user=request.user)
+                
+                # Extract data
+                name = request.data.get('name')
+                description = request.data.get('description')
+                price = request.data.get('price')
+                duration = request.data.get('duration')
+                category = request.data.get('category')
+                
+                # Update fields if provided
+                if name:
+                    service.name = name
+                if description:
+                    service.description = description
+                if price is not None:
+                    service.price = price
+                if duration is not None:
+                    service.duration = duration
+                if category:
+                    service.category = category
+                
+                service.save()
+                
+                return Response({
+                    'id': service.id,
+                    'name': service.name,
+                    'description': service.description,
+                    'price': service.price,
+                    'duration': service.duration,
+                    'category': service.category,
+                    'provider': {
+                        'id': service.provider.id,
+                        'business_name': service.provider.business_name,
+                        'business_description': service.provider.business_description,
+                    }
+                })
+                
+            except Service.DoesNotExist:
+                return Response({
+                    'error': 'Service not found or does not belong to this provider'
+                }, http_status.HTTP_404_NOT_FOUND)
+                
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
             
     def delete(self, request, service_id):
         """Delete service by ID"""
