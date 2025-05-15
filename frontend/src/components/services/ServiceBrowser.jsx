@@ -16,7 +16,10 @@ import {
     DialogContent,
     DialogActions,
     TextField,
-    Grid
+    Grid,
+    Card,
+    CardContent,
+    CardActions
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { services, appointments } from '../../services/api';
@@ -409,55 +412,54 @@ const ServiceBrowser = () => {
                 }}>
                     {selectedSubCategory ? (
                         filteredServices.length > 0 ? (
-                            <Box sx={{ width: '100%' }}>
-                                <Typography variant="h5" gutterBottom>
-                                    Available Services
-                                </Typography>
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
-                                    {filteredServices.map(service => (
-                                        <Box key={service.id} sx={{ width: '100%' }}>
-                                            <Paper sx={{ p: 2, mb: 2, width: '100%' }}>
-                                                <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                                                    <Box sx={{ mb: 2 }}>
-                                                        <Typography variant="h6" sx={{ fontSize: '1.1rem' }}>
-                                                            {service.name}
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
+                                {filteredServices.map(service => (
+                                    <Box key={service.id} sx={{ width: '100%' }}>
+                                        <Paper sx={{ p: 2, mb: 2, width: '100%', background: 'linear-gradient(135deg, #23203a 60%, #232a5c 100%)', color: '#f5f6fa', borderRadius: 3, boxShadow: '0 4px 24px 0 rgba(0,0,0,0.18)' }}>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                                                <Box sx={{ mb: 2 }}>
+                                                    <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1.1rem' }}>
+                                                        {service.name}
+                                                    </Typography>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1, maxWidth: '65%' }}>
+                                                            {service.description}
                                                         </Typography>
-                                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1, maxWidth: '65%' }}>
-                                                                {service.description}
+                                                        <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                                            <Typography variant="body2" color="primary" fontWeight={700}>
+                                                                ${service.price}
                                                             </Typography>
-                                                            <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                                                                <Typography variant="body2">
-                                                                    Provider: {service.provider.business_name}
-                                                                </Typography>
-                                                                <Typography variant="body2">
-                                                                    Duration: {service.duration} minutes
-                                                                </Typography>
-                                                                <Typography variant="body2" fontWeight="bold" color="primary.main">
-                                                                    ${service.price}
-                                                                </Typography>
-                                                            </Box>
+                                                            <Typography variant="body2">
+                                                                {service.duration} min
+                                                            </Typography>
+                                                            <Typography variant="body2" color="secondary.main">
+                                                                {service.provider.business_name}
+                                                            </Typography>
                                                         </Box>
                                                     </Box>
-                                                    <Typography variant="subtitle1" sx={{ mb: 1, mt: 1 }}>
-                                                        Available Appointments
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        Category: {service.category.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' > ')}
                                                     </Typography>
-                                                    <Box sx={{ height: '450px', width: '100%', overflow: 'hidden' }}>
-                                                        <AppointmentCalendar
-                                                            ref={el => calendarRefs.current[service.id] = el}
-                                                            mode="consumer"
-                                                            serviceId={service.id}
-                                                            service={service}
-                                                            daysToShow={5}
-                                                            onBlockClick={(block) => handleBlockClick(service, block)}
-                                                            title={`Available Appointments for ${service.name}`}
-                                                        />
-                                                    </Box>
                                                 </Box>
-                                            </Paper>
-                                        </Box>
-                                    ))}
-                                </Box>
+                                                <Divider sx={{ my: 1, bgcolor: 'rgba(255,255,255,0.08)' }} />
+                                                <Typography variant="subtitle1" sx={{ mb: 1, mt: 1 }}>
+                                                    Available Appointments
+                                                </Typography>
+                                                <Box sx={{ height: '450px', width: '100%', overflow: 'hidden' }}>
+                                                    <AppointmentCalendar
+                                                        ref={el => calendarRefs.current[service.id] = el}
+                                                        mode="consumer"
+                                                        serviceId={service.id}
+                                                        service={service}
+                                                        daysToShow={5}
+                                                        onBlockClick={(block) => handleBlockClick(service, block)}
+                                                        title={`Available Appointments for ${service.name}`}
+                                                    />
+                                                </Box>
+                                            </Box>
+                                        </Paper>
+                                    </Box>
+                                ))}
                             </Box>
                         ) : (
                             <Box sx={{ textAlign: 'center', py: 3 }}>

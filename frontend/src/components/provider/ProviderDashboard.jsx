@@ -217,14 +217,6 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
             </Typography>
             <Box sx={{ mb: 2, display: 'flex', gap: 2 }}>
                 <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={handleCreateService}
-                    startIcon={<AddIcon />}
-                >
-                    Add New Service
-                </Button>
-                <Button
                     variant="outlined"
                     color="primary"
                     onClick={() => navigate('/provider/profile')}
@@ -301,14 +293,6 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                                 <Typography variant="body1" color="text.secondary">
                                     You haven't created any services yet.
                                 </Typography>
-                                <Button
-                                    variant="contained"
-                                    color="primary"
-                                    onClick={handleCreateService}
-                                    sx={{ mt: 2 }}
-                                >
-                                    Add New Service
-                                </Button>
                             </Box>
                         )}
                     </Box>
