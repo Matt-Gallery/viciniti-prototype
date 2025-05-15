@@ -1379,70 +1379,96 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                         if is_available and discounts_enabled and consumer_location:
                             print(f"!!!!! VERBOSE DEBUG: Calculating discount for slot {slot['id']} !!!!!")
                             
-                            # Convert to a list to track proximity appointments and their distances
-                            nearby_appointments = []
+                            # First filter for time-adjacent appointments (immediately before or after this slot)
+                            # Define what "adjacent" means in minutes
+                            time_adjacency_threshold_minutes = 60  # Consider appointments within 1 hour to be adjacent
                             
-                            # Find nearby appointments (within maximum tier distance)
-                            max_distance = discount_config.tier4_max_distance  # Use the largest tier distance
+                            # Convert time adjacency to timedelta
+                            time_adjacency_threshold = timezone.timedelta(minutes=time_adjacency_threshold_minutes)
                             
-                            print(f"DEBUG DISCOUNT: Checking for nearby appointments within {max_distance} yards")
-                            
+                            # Filter for appointments that are close in time to this slot
+                            time_adjacent_appointments = []
                             for appt in existing_appointments:
-                                # Skip if appointment has no location
-                                if not appt.location or not consumer_location:
-                                    print(f"!!!!! VERBOSE DEBUG: Skipping appointment {appt.id} - Missing location data !!!!!")
-                                    continue
+                                # Check if appointment ends shortly before this slot begins
+                                if slot['start'] - time_adjacency_threshold <= appt.end_time <= slot['start']:
+                                    print(f"!!!!! VERBOSE DEBUG: Found appointment {appt.id} ending before slot starts !!!!!")
+                                    time_adjacent_appointments.append(appt)
+                                
+                                # Check if appointment begins shortly after this slot ends
+                                elif slot['end'] <= appt.start_time <= slot['end'] + time_adjacency_threshold:
+                                    print(f"!!!!! VERBOSE DEBUG: Found appointment {appt.id} starting after slot ends !!!!!")
+                                    time_adjacent_appointments.append(appt)
+                            
+                            print(f"!!!!! VERBOSE DEBUG: Found {len(time_adjacent_appointments)} time-adjacent appointments !!!!!")
+                            
+                            # Only proceed if we have time-adjacent appointments
+                            if time_adjacent_appointments:
+                                # Now filter for appointments that are also geographically close
+                                nearby_appointments = []
+                                
+                                # Find nearby appointments within maximum tier distance
+                                max_distance = discount_config.tier4_max_distance  # Use the largest tier distance
+                                
+                                print(f"!!!!! VERBOSE DEBUG: Checking for time-adjacent appointments within {max_distance} yards !!!!!")
+                                
+                                for appt in time_adjacent_appointments:
+                                    # Skip if appointment has no location
+                                    if not appt.location or not consumer_location:
+                                        print(f"!!!!! VERBOSE DEBUG: Skipping appointment {appt.id} - Missing location data !!!!!")
+                                        continue
+                                        
+                                    # Calculate distance between consumer and appointment location in yards
+                                    # PostGIS uses meters for geography calculations
+                                    try:
+                                        # Debug the locations we're comparing
+                                        print(f"!!!!! VERBOSE DEBUG: Calculating distance - Consumer({consumer_location.y},{consumer_location.x}) to Appt({appt.latitude},{appt.longitude}) !!!!!")
+                                        
+                                        distance_m = consumer_location.distance(appt.location) * 100000  # Convert to meters
+                                        distance_yards = distance_m * 1.09361  # Convert meters to yards
+                                        
+                                        print(f"!!!!! VERBOSE DEBUG: Time-adjacent appointment {appt.id} is {distance_yards:.2f} yards away !!!!!")
+                                        
+                                        if distance_yards <= max_distance:
+                                            nearby_appointments.append({
+                                                'appointment': appt,
+                                                'distance_yards': distance_yards
+                                            })
+                                            print(f"!!!!! VERBOSE DEBUG: Added to nearby appointments - within discount range !!!!!")
+                                        else:
+                                            print(f"!!!!! VERBOSE DEBUG: Appointment too far away ({distance_yards:.2f} yards) - max: {max_distance} !!!!!")
+                                    except Exception as e:
+                                        print(f"!!!!! VERBOSE DEBUG: Distance calculation error: {str(e)} !!!!!")
+                                
+                                # Sort by distance (closest first)
+                                nearby_appointments.sort(key=lambda x: x['distance_yards'])
+                                
+                                print(f"!!!!! VERBOSE DEBUG: Found {len(nearby_appointments)} nearby AND time-adjacent appointments !!!!!")
+                                
+                                # If we have nearby and time-adjacent appointments, calculate a discount
+                                if nearby_appointments:
+                                    # Get the closest appointment's distance
+                                    closest_distance = nearby_appointments[0]['distance_yards']
+                                    appt_count = min(len(nearby_appointments), 5)  # Cap at 5 for discount tiers
                                     
-                                # Calculate distance between consumer and appointment location in yards
-                                # PostGIS uses meters for geography calculations
-                                try:
-                                    # Debug the locations we're comparing
-                                    print(f"!!!!! VERBOSE DEBUG: Calculating distance - Consumer({consumer_location.y},{consumer_location.x}) to Appt({appt.latitude},{appt.longitude}) !!!!!")
+                                    print(f"!!!!! VERBOSE DEBUG: About to call get_discount_for_distance_and_count with {closest_distance:.2f} yards and {appt_count} appointments !!!!!")
                                     
-                                    distance_m = consumer_location.distance(appt.location) * 100000  # Convert to meters
-                                    distance_yards = distance_m * 1.09361  # Convert meters to yards
+                                    # Calculate discount based on distance and appointment count
+                                    discount_percentage = discount_config.get_discount_for_distance_and_count(
+                                        closest_distance, appt_count
+                                    )
                                     
-                                    print(f"!!!!! VERBOSE DEBUG: Appointment {appt.id} is {distance_yards:.2f} yards away !!!!!")
+                                    print(f"!!!!! VERBOSE DEBUG: Calculated discount: {discount_percentage}% !!!!!")
                                     
-                                    if distance_yards <= max_distance:
-                                        nearby_appointments.append({
-                                            'appointment': appt,
-                                            'distance_yards': distance_yards
-                                        })
-                                        print(f"!!!!! VERBOSE DEBUG: Added to nearby appointments - within discount range !!!!!")
+                                    if discount_percentage > 0:
+                                        slot['discount_percentage'] = discount_percentage
+                                        slot['discounted_price'] = round(slot['original_price'] * (1 - discount_percentage / 100), 2)
+                                        print(f"!!!!! VERBOSE DEBUG: Applied {discount_percentage}% discount for slot {slot['id']} !!!!!")
                                     else:
-                                        print(f"!!!!! VERBOSE DEBUG: Appointment too far away ({distance_yards:.2f} yards) - max: {max_distance} !!!!!")
-                                except Exception as e:
-                                    print(f"!!!!! VERBOSE DEBUG: Distance calculation error: {str(e)} !!!!!")
-                            
-                            # Sort by distance (closest first)
-                            nearby_appointments.sort(key=lambda x: x['distance_yards'])
-                            
-                            print(f"!!!!! VERBOSE DEBUG: Found {len(nearby_appointments)} nearby appointments !!!!!")
-                            
-                            # If we have nearby appointments, calculate a discount
-                            if nearby_appointments:
-                                # Get the closest appointment's distance
-                                closest_distance = nearby_appointments[0]['distance_yards']
-                                appt_count = min(len(nearby_appointments), 5)  # Cap at 5 for discount tiers
-                                
-                                print(f"!!!!! VERBOSE DEBUG: About to call get_discount_for_distance_and_count with {closest_distance:.2f} yards and {appt_count} appointments !!!!!")
-                                
-                                # Calculate discount based on distance and appointment count
-                                discount_percentage = discount_config.get_discount_for_distance_and_count(
-                                    closest_distance, appt_count
-                                )
-                                
-                                print(f"!!!!! VERBOSE DEBUG: Calculated discount: {discount_percentage}% !!!!!")
-                                
-                                if discount_percentage > 0:
-                                    slot['discount_percentage'] = discount_percentage
-                                    slot['discounted_price'] = round(slot['original_price'] * (1 - discount_percentage / 100), 2)
-                                    print(f"!!!!! VERBOSE DEBUG: Applied {discount_percentage}% discount for slot {slot['id']} !!!!!")
+                                        print(f"!!!!! VERBOSE DEBUG: No discount applied - calculated percentage was 0% !!!!!")
                                 else:
-                                    print(f"!!!!! VERBOSE DEBUG: No discount applied - calculated percentage was 0% !!!!!")
+                                    print(f"!!!!! VERBOSE DEBUG: No nearby AND time-adjacent appointments found - no discount applied !!!!!")
                             else:
-                                print(f"!!!!! VERBOSE DEBUG: No nearby appointments found !!!!!")
+                                print(f"!!!!! VERBOSE DEBUG: No time-adjacent appointments found - no discount applied !!!!!")
                         elif not is_available:
                             print(f"!!!!! VERBOSE DEBUG: Slot not available, skipping discount calculation !!!!!")
                         elif not discounts_enabled:
