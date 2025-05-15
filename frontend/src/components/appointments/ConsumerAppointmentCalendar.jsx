@@ -252,6 +252,15 @@ const ConsumerAppointmentCalendar = ({
                 country: 'United States'
             };
             
+            // Add discount information if available
+            if (selectedSlot.discountPercentage > 0) {
+                appointmentData.original_price = selectedSlot.originalPrice;
+                appointmentData.discount_amount = selectedSlot.originalPrice - selectedSlot.discountedPrice;
+                appointmentData.final_price = selectedSlot.discountedPrice;
+                appointmentData.discount_percentage = selectedSlot.discountPercentage;
+                appointmentData.discount_reason = 'Proximity discount';
+            }
+            
             console.log('Sending appointment data', JSON.stringify(appointmentData));
             
             // Call API to create appointment
@@ -375,9 +384,38 @@ const ConsumerAppointmentCalendar = ({
                                 <Typography variant="body2">
                                     Provider: {service.provider.business_name}
                                 </Typography>
-                                <Typography variant="body2" color="primary">
-                                    Price: ${service.price}
-                                </Typography>
+                                {selectedSlot && selectedSlot.discountPercentage > 0 ? (
+                                    <Box sx={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center',
+                                        gap: 1,
+                                        mt: 1,
+                                        flexWrap: 'wrap'
+                                    }}>
+                                        <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                                            ${selectedSlot.originalPrice}
+                                        </Typography>
+                                        <Typography variant="caption" sx={{ 
+                                            color: 'success.main',
+                                            bgcolor: 'success.light',
+                                            px: 0.5,
+                                            py: 0.1,
+                                            borderRadius: '4px'
+                                        }}>
+                                            -{selectedSlot.discountPercentage}%
+                                        </Typography>
+                                        <Typography variant="body2" color="success.main" sx={{ fontWeight: 'bold' }}>
+                                            ${selectedSlot.discountedPrice}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary" sx={{ width: '100%', mt: 0.5, display: 'block' }}>
+                                            Discount applied based on proximity to other appointments
+                                        </Typography>
+                                    </Box>
+                                ) : (
+                                    <Typography variant="body2" color="primary">
+                                        Price: ${service.price}
+                                    </Typography>
+                                )}
                                 <Typography variant="body2" color="text.secondary" sx={{ mt: 2, fontSize: '0.85rem', bgcolor: 'rgba(0, 0, 0, 0.03)', p: 1 }}>
                                     Duration: {service.duration} minutes
                                 </Typography>

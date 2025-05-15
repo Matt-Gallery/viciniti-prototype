@@ -18,6 +18,7 @@ urlpatterns = [
     path('provider/setup/', views.ProviderSetupAPI.as_view(), name='api_provider_setup'),
     path('provider/profile/', views.ProviderProfileAPI.as_view(), name='api_provider_profile'),
     path('providers/<int:provider_id>/availability/', views.ProviderAvailabilityAPI.as_view(), name='api_provider_availability'),
+    path('provider/discount-config/', views.ProximityDiscountConfigAPI.as_view(), name='api_provider_discount_config'),
     
     # Service endpoints
     path('services/', views.ServiceListAPI.as_view(), name='api_service_list'),
@@ -26,6 +27,7 @@ urlpatterns = [
     path('services/create/', views.ServiceCreateAPI.as_view(), name='api_service_create'),
     path('services/provider/<int:provider_id>/', views.ProviderServiceListAPI.as_view(), name='api_provider_services'),
     path('services/<int:service_id>/availability/', views.ServiceAvailabilityAPI.as_view(), name='api_service_availability'),
+    path('services/<int:service_id>/availability-with-discount/', views.ServiceAvailabilityWithDiscountAPI.as_view(), name='api_service_availability_with_discount'),
     
     # Appointment endpoints - Updated to support UUID format
     path('appointments/', views.AppointmentListAPI.as_view(), name='api_appointment_list'),

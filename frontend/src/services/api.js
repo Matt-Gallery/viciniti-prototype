@@ -135,6 +135,12 @@ export const providers = {
     
     updatePassword: (passwordData) =>
         api.put('/auth/password/', passwordData),
+        
+    getDiscountConfig: () =>
+        api.get('/provider/discount-config/'),
+        
+    updateDiscountConfig: (configData) =>
+        api.put('/provider/discount-config/', configData),
 };
 
 export const appointments = {
@@ -193,6 +199,12 @@ export const availability = {
     getForService: (serviceId) => {
         console.log('Getting availability for service:', serviceId);
         return api.get(`/services/${serviceId}/availability/`);
+    },
+    
+    // Get availability with proximity discount for a specific service
+    getForServiceWithDiscount: (serviceId) => {
+        console.log('Getting availability with discount for service:', serviceId);
+        return api.get(`/services/${serviceId}/availability-with-discount/`);
     },
     
     // Save provider availability

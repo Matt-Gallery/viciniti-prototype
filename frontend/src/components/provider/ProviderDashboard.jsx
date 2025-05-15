@@ -27,6 +27,7 @@ import AddIcon from '@mui/icons-material/Add';
 import { services as servicesApi, appointments as appointmentsApi, availability as availabilityApi } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import ProviderAvailabilityCalendar from './ProviderAvailabilityCalendar';
+import ProximityDiscountConfig from './ProximityDiscountConfig';
 
 
 const TabPanel = ({ children, value, index }) => (
@@ -171,42 +172,31 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
      };
     
     const handleAvailabilityChange = async (availability) => {
-        console.log('Availability updated:', availability);
+        console.log('Availability updated in ProviderDashboard:', availability);
         
         if (!providerId) {
+            console.error('Cannot save availability: No provider ID available');
+            setError('Provider ID not found. Please refresh the page.');
             return;
         }
         
         // Check if there are any actual time blocks to save
-        const hasBlocks = Object.values(availability).some(blocks => blocks.length > 0);
+        const hasBlocks = Object.values(availability).some(blocks => blocks && blocks.length > 0);
         if (!hasBlocks) {
             console.log('No time blocks to save');
             return;
         }
         
-        try {
-            console.log('Saving availability with provider ID');
-            const response = await availabilityApi.save(providerId, availability);
-            console.log('Availability saved successfully');
-            
-            // Update the local state with the saved availability data
-            setAvailabilityData(response.data);
-            
-            // Show success message temporarily
-            setError('');
-            const successMessage = 'Availability saved successfully';
-            // Display success message temporarily
-            setError(successMessage);
-            setTimeout(() => {
-                setError(prev => prev === successMessage ? '' : prev);
-            }, 3000);
-            
-            // Refresh the availability data
-            fetchAvailabilityData(providerId);
-        } catch (error) {
-            console.error('Error saving availability');
-            setError('Failed to save availability. Please try again.');
-        }
+        // Update local state immediately to keep UI in sync
+        setAvailabilityData(availability);
+        
+        // Show a success message
+        setError('');
+        const successMessage = 'Availability saved successfully';
+        setError(successMessage);
+        setTimeout(() => {
+            setError(prev => prev === successMessage ? '' : prev);
+        }, 3000);
     };
 
     const handleCreateService = () => {
@@ -252,6 +242,7 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                 <Tabs value={tabValue} onChange={(_, newValue) => setTabValue(newValue)}>
                     <Tab label="Services" />
                     <Tab label="Appointments" />
+                    <Tab label="Discount Configuration" />
                 </Tabs>
             </Box>
             <TabPanel value={tabValue} index={0}>
@@ -469,6 +460,9 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                         </Box>
                     )}
                 </Stack>
+            </TabPanel>
+            <TabPanel value={tabValue} index={2}>
+                <ProximityDiscountConfig />
             </TabPanel>
             { /* Delete Confirmation Dialog */ }
             <Dialog
