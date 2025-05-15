@@ -536,9 +536,13 @@ const AppointmentCalendar = forwardRef(({ mode,
         return timeBlocks[dateStr] || [];
      };
 
-    // Get existing user appointments for a specific day - combine both prop appointments and userAppointments
+    // Update the getAppointmentsForDay function to be more robust
     const getAppointmentsForDay = (day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
+        console.log('Getting appointments for day:', dateStr);
+        console.log('Current appointments:', appointments);
+        console.log('Current userAppointments:', userAppointments);
+        
         // Create a combined array without duplicates
         const allAppointments = [...appointments];
         
@@ -551,10 +555,13 @@ const AppointmentCalendar = forwardRef(({ mode,
         });
         
         // Filter for the current day
-        return allAppointments.filter(appointment => {
+        const dayAppointments = allAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
         });
+        
+        console.log('Filtered appointments for day:', dayAppointments);
+        return dayAppointments;
     };
     
     // Get provider appointments for a specific day
@@ -628,7 +635,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             textAlign: 'center',
             fontWeight: 600,
             fontSize: '0.85rem',
-            zIndex: 3,
             cursor: 'pointer',
             boxShadow: '0 2px 8px 0 rgba(36,81,255,0.10)',
             border: '1.5px solid rgba(36,81,255,0.15)',
@@ -668,8 +674,6 @@ const AppointmentCalendar = forwardRef(({ mode,
                 backgroundColor: colors.bg,
                 color: colors.text,
                 border: `1.5px solid ${colors.border}`,
-                width: 'calc(100% - 12px)',
-                left: '6px',
                 zIndex: 4, // Ensure appointments appear above availability blocks
             };
         } else if (isUserAppointment) {
@@ -975,98 +979,100 @@ const AppointmentCalendar = forwardRef(({ mode,
         );
     };
     
-    // Update the block rendering to include appointments
+    // Update the renderTimeBlock function to handle overlapping appointments and availability
     const renderTimeBlock = (day, hour) => {
         const dateStr = format(day, 'yyyy-MM-dd');
         const blocks = timeBlocks[dateStr] || [];
         const dayAppointments = getAppointmentsForDay(day);
         const providerDayAppointments = getProviderAppointmentsForDay(day);
-        
-        // Debug logging
-        if (hour === 5) { // Only log once per day to avoid console spam
-            console.log(`Rendering day ${dateStr}:`, {
-                blocks: blocks.length,
-                dayAppointments: dayAppointments.length,
-                providerDayAppointments: providerDayAppointments.length,
-                mode: mode,
-                providerId: providerId
-            });
-        }
+        const allAppointments = [...dayAppointments, ...providerDayAppointments];
 
-        // Find if there's an appointment at this hour
-        const appointment = dayAppointments.find(apt => {
-            const aptStart = new Date(apt.start_time);
-            const aptEnd = new Date(apt.end_time);
-            const blockStart = new Date(day);
-            blockStart.setHours(hour, 0, 0);
-            const blockEnd = new Date(day);
-            blockEnd.setHours(hour + 1, 0, 0);
-            return areIntervalsOverlapping(
-                { start: aptStart, end: aptEnd },
-                { start: blockStart, end: blockEnd }
-            );
-        });
+        // Find all availability blocks that overlap this hour
+        const hourStart = new Date(day);
+        hourStart.setHours(hour, 0, 0, 0);
+        const hourEnd = new Date(day);
+        hourEnd.setHours(hour + 1, 0, 0, 0);
 
-        // Find if there's a provider appointment at this hour
-        const providerAppointment = providerDayAppointments.find(apt => {
-            const aptStart = new Date(apt.start_time);
-            const aptEnd = new Date(apt.end_time);
-            const blockStart = new Date(day);
-            blockStart.setHours(hour, 0, 0);
-            const blockEnd = new Date(day);
-            blockEnd.setHours(hour + 1, 0, 0);
-            return areIntervalsOverlapping(
-                { start: aptStart, end: aptEnd },
-                { start: blockStart, end: blockEnd }
-            );
-        });
-
-        // Find if there's an availability block at this hour
-        const block = blocks.find(block => {
+        // Render all split availability segments for this hour
+        const availabilitySegments = [];
+        blocks.forEach(block => {
             const blockStart = block.start instanceof Date ? block.start : new Date(block.start);
             const blockEnd = block.end instanceof Date ? block.end : new Date(block.end);
-            const hourStart = new Date(day);
-            hourStart.setHours(hour, 0, 0);
-            const hourEnd = new Date(day);
-            hourEnd.setHours(hour + 1, 0, 0);
-            return areIntervalsOverlapping(
-                { start: blockStart, end: blockEnd },
-                { start: hourStart, end: hourEnd }
-            );
+            // Only consider blocks that overlap this hour
+            if (!areIntervalsOverlapping({ start: blockStart, end: blockEnd }, { start: hourStart, end: hourEnd })) return;
+
+            // Find all overlapping appointments for this block
+            const overlappingApts = allAppointments.filter(apt => {
+                const aptStart = new Date(apt.start_time);
+                const aptEnd = new Date(apt.end_time);
+                return areIntervalsOverlapping({ start: blockStart, end: blockEnd }, { start: aptStart, end: aptEnd });
+            });
+
+            // If no overlap, render the whole block
+            if (overlappingApts.length === 0) {
+                availabilitySegments.push({ start: blockStart, end: blockEnd, block });
+            } else {
+                // Split the block into available segments around appointments
+                let segments = [];
+                let currentStart = blockStart;
+                // Sort appointments by start time
+                const sortedApts = overlappingApts.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+                sortedApts.forEach((apt, idx) => {
+                    const aptStart = new Date(apt.start_time);
+                    const aptEnd = new Date(apt.end_time);
+                    if (currentStart < aptStart) {
+                        segments.push({ start: currentStart, end: aptStart, block });
+                    }
+                    currentStart = aptEnd > currentStart ? aptEnd : currentStart;
+                });
+                // Add the last segment if any
+                if (currentStart < blockEnd) {
+                    segments.push({ start: currentStart, end: blockEnd, block });
+                }
+                // Only push segments that overlap this hour
+                segments.forEach(seg => {
+                    if (areIntervalsOverlapping({ start: seg.start, end: seg.end }, { start: hourStart, end: hourEnd })) {
+                        availabilitySegments.push(seg);
+                    }
+                });
+            }
         });
 
-        // First render the availability block if it exists
-        if (block) {
-            const startDate = block.start instanceof Date ? block.start : new Date(block.start);
-            const endDate = block.end instanceof Date ? block.end : new Date(block.end);
-            
-            const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
-            const endMinutes = endDate.getHours() * 60 + endDate.getMinutes();
-            
+        // Render all availability segments for this hour
+        const availabilityBlocks = availabilitySegments.map((seg, idx) => {
+            const startMinutes = seg.start.getHours() * 60 + seg.start.getMinutes();
+            const endMinutes = seg.end.getHours() * 60 + seg.end.getMinutes();
             const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
             const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
-
             return (
                 <Box
-                    key={`block-${block.id}-${hour}`}
+                    key={`block-${seg.block.id}-${hour}-${idx}`}
                     className="availability-block"
-                    sx={getBlockStyle(block, false, null)}
+                    sx={{
+                        ...getBlockStyle(seg.block, false, null),
+                        position: 'absolute',
+                        top: `${top}px`,
+                        height: `${height}px`,
+                        zIndex: 3,
+                        width: 'calc(100% - 8px)',
+                        left: '4px'
+                    }}
                     onClick={() => {
                         if (mode === 'provider') {
-                            handleEditBlock(day, block);
+                            handleEditBlock(day, seg.block);
                         } else if (mode === 'consumer' && onBlockClick) {
-                            onBlockClick(block);
+                            onBlockClick(seg.block);
                         }
                     }}
                 >
-                    {block.discountPercentage > 0 ? (
+                    {seg.block.discountPercentage > 0 ? (
                         <>
                             <Typography variant="caption" sx={{ fontSize: '0.85rem', fontWeight: 600, color: 'inherit', width: '100%', textAlign: 'center', mb: 0.5, lineHeight: 1 }}>
                                 Discounted
                             </Typography>
                             <Typography variant="caption" sx={{ fontSize: '0.85rem', color: 'inherit', width: '100%', textAlign: 'center', lineHeight: 1 }}>
-                                <span style={{ textDecoration: 'line-through', color: '#e0e0e0', marginRight: 4 }}>${block.originalPrice}</span>
-                                <span style={{ color: '#ffd200', fontWeight: 700 }}>${block.discountedPrice}</span>
+                                <span style={{ textDecoration: 'line-through', color: '#e0e0e0', marginRight: 4 }}>${seg.block.originalPrice}</span>
+                                <span style={{ color: '#ffd200', fontWeight: 700 }}>${seg.block.discountedPrice}</span>
                             </Typography>
                         </>
                     ) : (
@@ -1080,7 +1086,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 size="small"
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    handleEditBlock(day, block);
+                                    handleEditBlock(day, seg.block);
                                 }}
                                 sx={{ 
                                     p: 0.5,
@@ -1094,7 +1100,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 size="small"
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    handleDeleteBlockClick(day, block);
+                                    handleDeleteBlockClick(day, seg.block);
                                 }}
                                 sx={{ 
                                     p: 0.5,
@@ -1108,56 +1114,78 @@ const AppointmentCalendar = forwardRef(({ mode,
                     )}
                 </Box>
             );
-        }
+        });
 
-        // Then render the appointment if it exists
-        if (appointment || providerAppointment) {
-            const apt = appointment || providerAppointment;
-            return (
-                <Box
-                    key={`appointment-${dateStr}-${apt.id}-${hour}`}
-                    className="appointment-block"
-                    sx={getBlockStyle({}, false, apt)}
-                    onClick={() => {
-                        if (mode === 'provider') {
-                            handleProviderAppointmentClick(apt);
-                        } else {
-                            handleAppointmentClick(apt);
-                        }
-                    }}
-                >
-                    <Typography variant="caption" sx={{ 
-                        fontSize: '0.85rem', 
-                        fontWeight: 600, 
-                        color: 'inherit', 
-                        width: '100%', 
-                        overflow: 'hidden', 
-                        textOverflow: 'ellipsis', 
-                        whiteSpace: 'nowrap', 
-                        textAlign: 'center',
-                        px: 1
-                    }}>
-                        {apt.service?.name || 'Booked'}
-                    </Typography>
-                    {apt.consumer?.username && (
-                        <Typography variant="caption" sx={{ 
-                            fontSize: '0.8rem', 
-                            color: 'inherit', 
-                            width: '100%', 
-                            overflow: 'hidden', 
-                            textOverflow: 'ellipsis', 
-                            whiteSpace: 'nowrap', 
-                            textAlign: 'center',
+        // Render all appointments for this hour (on top)
+        const appointmentBlocks = allAppointments
+            .filter(apt => {
+                const aptStart = new Date(apt.start_time);
+                const aptEnd = new Date(apt.end_time);
+                return areIntervalsOverlapping({ start: aptStart, end: aptEnd }, { start: hourStart, end: hourEnd });
+            })
+            .map((apt, idx) => {
+                const startTime = new Date(apt.start_time);
+                const endTime = new Date(apt.end_time);
+                const startMinutes = startTime.getHours() * 60 + startTime.getMinutes();
+                const endMinutes = endTime.getHours() * 60 + endTime.getMinutes();
+                const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
+                const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
+                return (
+                    <Box
+                        key={`appointment-${dateStr}-${apt.id}-${hour}-${idx}`}
+                        className="appointment-block"
+                        sx={{
+                            ...getBlockStyle({}, false, apt),
+                            position: 'absolute',
+                            top: `${top}px`,
+                            height: `${height}px`,
+                            zIndex: 4,
+                            width: 'calc(100% - 8px)',
+                            left: '4px',
+                            minHeight: '32px',
+                            display: 'flex',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            overflow: 'hidden',
                             px: 1
+                        }}
+                        onClick={() => {
+                            if (mode === 'provider') {
+                                handleProviderAppointmentClick(apt);
+                            } else {
+                                handleAppointmentClick(apt);
+                            }
+                        }}
+                    >
+                        <Typography variant="caption" sx={{
+                            fontSize: '0.85rem',
+                            fontWeight: 600,
+                            color: 'inherit',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                         }}>
-                            {apt.consumer.username}
+                            {apt.service?.name || 'Booked'}
                         </Typography>
-                    )}
-                </Box>
-            );
-        }
+                        {apt.consumer?.username && (
+                            <Typography variant="caption" sx={{
+                                fontSize: '0.8rem',
+                                color: 'inherit',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                ml: 1
+                            }}>
+                                {apt.consumer.username}
+                            </Typography>
+                        )}
+                    </Box>
+                );
+            });
 
-        return null;
+        // Always return both as a fragment
+        return <>{[...availabilityBlocks, ...appointmentBlocks]}</>;
     };
     
     const handleEditBlock = (day, block, event) => {
@@ -1899,7 +1927,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                         {cancelSuccess ? "Appointment Cancelled" : "Appointment Details"}
                     </DialogTitle>
                     {cancelSuccess ? (
-                        <DialogContent>
+                        <DialogContent sx={{ pl: 4, pr: 2 }}>
                             <Box sx={{ textAlign: 'center', py: 2 }}>
                                 <CheckCircleIcon color="success" sx={{ fontSize: '3rem', mb: 2 }} />
                                 <Typography variant="h6" gutterBottom>
@@ -1910,14 +1938,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                             </Box>
                         </DialogContent>
                     ) : (
-                        <>
+                        <DialogContent sx={{ pl: 4, pr: 2 }}>
                             {cancelError && (
                                 <Alert severity="error" sx={{ mb: 2 }}>
                                     {cancelError}
                                 </Alert>
                             )}
-                            
-                            <Box sx={{ mb: 2 }}>
+                            <Box sx={{ mb: 2, alignItems: 'flex-start' }}>
                                 <Typography variant="h6" gutterBottom>
                                     {selectedAppointment?.service?.name || "Appointment"}
                                 </Typography>
@@ -2033,7 +2060,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 Booked on: {selectedAppointment?.created_at && 
                                    format(new Date(selectedAppointment.created_at), 'MMMM d, yyyy')}
                             </Typography>
-                        </>
+                        </DialogContent>
                     )}
                     
                     <DialogActions>
