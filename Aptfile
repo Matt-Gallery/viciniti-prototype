@@ -1,4 +1,10 @@
 gdal-bin
 libgdal-dev
 python3-gdal
-libproj-dev 
+libproj-dev
+libgeos-dev
+libgeotiff-dev
+libhdf4-alt-dev
+libhdf5-dev
+libnetcdf-dev
+libspatialite-dev 
