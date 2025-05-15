@@ -20,11 +20,103 @@ import AppointmentList from './components/appointments/AppointmentList';
 // Create a theme instance
 const theme = createTheme({
     palette: {
+        mode: 'dark',
         primary: {
-            main: '#1976d2',
+            main: '#2451ff', // Apple blue
         },
         secondary: {
-            main: '#dc004e',
+            main: '#a259f7', // Modern purple accent
+        },
+        background: {
+            default: 'linear-gradient(135deg, #181c2f 0%, #232a5c 100%)', // Apple-like gradient
+            paper: 'linear-gradient(135deg, rgba(34,36,58,0.95) 60%, rgba(162,89,247,0.85) 100%)', // Gradient for panels
+        },
+        text: {
+            primary: '#f5f6fa',
+            secondary: '#b0b3b8',
+        },
+    },
+    shape: {
+        borderRadius: 20,
+    },
+    typography: {
+        fontFamily: [
+            '-apple-system',
+            'BlinkMacSystemFont',
+            'Segoe UI',
+            'Roboto',
+            'Oxygen',
+            'Ubuntu',
+            'Cantarell',
+            'Fira Sans',
+            'Droid Sans',
+            'Helvetica Neue',
+            'sans-serif',
+        ].join(','),
+        h4: {
+            fontWeight: 800,
+            letterSpacing: '-1px',
+            fontSize: '2.4rem',
+        },
+        h5: {
+            fontWeight: 700,
+            fontSize: '1.5rem',
+        },
+        body1: {
+            fontWeight: 400,
+            fontSize: '1.1rem',
+        },
+        button: {
+            fontWeight: 600,
+            fontSize: '1rem',
+        },
+    },
+    components: {
+        MuiPaper: {
+            styleOverrides: {
+                root: {
+                    background: 'linear-gradient(135deg, rgba(34,36,58,0.95) 60%, rgba(162,89,247,0.85) 100%)',
+                    borderRadius: 20,
+                    boxShadow: '0 8px 32px 0 rgba(36,81,255,0.12)',
+                    backdropFilter: 'blur(12px)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                },
+            },
+        },
+        MuiButton: {
+            styleOverrides: {
+                root: {
+                    borderRadius: 999,
+                    textTransform: 'none',
+                    fontWeight: 600,
+                    boxShadow: '0 2px 8px 0 rgba(36,81,255,0.10)',
+                    paddingLeft: 24,
+                    paddingRight: 24,
+                    background: 'linear-gradient(90deg, #2451ff 0%, #a259f7 100%)',
+                    color: '#fff',
+                },
+            },
+        },
+        MuiCard: {
+            styleOverrides: {
+                root: {
+                    borderRadius: 24,
+                    boxShadow: '0 8px 32px 0 rgba(36,81,255,0.10)',
+                    background: 'linear-gradient(135deg, rgba(34,36,58,0.95) 60%, rgba(162,89,247,0.85) 100%)',
+                    backdropFilter: 'blur(12px)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                },
+            },
+        },
+        MuiAppBar: {
+            styleOverrides: {
+                colorPrimary: {
+                    background: 'linear-gradient(90deg, #181c2f 60%, #232a5c 100%)',
+                    backdropFilter: 'blur(16px)',
+                    boxShadow: '0 4px 24px 0 rgba(36,81,255,0.10)',
+                    borderBottom: '1px solid rgba(255,255,255,0.08)',
+                },
+            },
         },
     },
 });

@@ -77,8 +77,8 @@ const AppointmentCalendar = forwardRef(({ mode,
     const [deletingBlock, setDeletingBlock] = useState(null);
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     
-    const WORKING_HOURS_START = 8; // 8 AM
-    const WORKING_HOURS_END = 20;  // 8 PM
+    const WORKING_HOURS_START = 5; // 5 AM
+    const WORKING_HOURS_END = 23;  // 11 PM
     const HOUR_HEIGHT = 70;        // Increased from 50 to 70 pixels per hour
     
     const [providerAppointments, setProviderAppointments] = useState([]);
@@ -250,10 +250,11 @@ const AppointmentCalendar = forwardRef(({ mode,
             console.log('Fetching provider appointments');
             const response = await appointmentsApi.getAllForProvider();
             
-            console.log('Provider appointments loaded');
-            setProviderAppointments(response.data);
+            console.log('Provider appointments loaded:', response.data);
+            // Ensure we're setting the appointments in state
+            setProviderAppointments(response.data || []);
         } catch (err) {
-            console.error('Error fetching provider appointments');
+            console.error('Error fetching provider appointments:', err);
             // Don't set error - this is supplementary data
         }
     };
@@ -305,9 +306,11 @@ const AppointmentCalendar = forwardRef(({ mode,
         
         // Load data based on mode
         if (mode === 'provider' && providerId) {
+            console.log('Provider mode - fetching availability and appointments');
             fetchProviderAvailability(providerId);
             fetchProviderAppointments(); // Fetch provider's appointments
         } else if (mode === 'consumer' && serviceId) {
+            console.log('Consumer mode - fetching service availability');
             fetchServiceAvailability(serviceId);
             fetchUserAppointments(); // Fetch user's existing appointments
         }
@@ -559,10 +562,16 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (mode !== 'provider') return [];
         
         const dateStr = format(day, 'yyyy-MM-dd');
-        return providerAppointments.filter(appointment => {
+        console.log('Getting provider appointments for day:', dateStr);
+        console.log('Current provider appointments:', providerAppointments);
+        
+        const dayAppointments = providerAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
-         });
+        });
+        
+        console.log('Filtered appointments for day:', dayAppointments);
+        return dayAppointments;
     };
     
     // Handle mouse leave event
@@ -607,93 +616,107 @@ const AppointmentCalendar = forwardRef(({ mode,
             top: `${top}px`,
             height: `${height}px`,
             width: 'calc(100% - 8px)',
-            borderRadius: '3px',
-            padding: '2px 4px',
-            paddingTop: '0px', // Reduce top padding to move content up
+            left: '4px',
+            borderRadius: '6px',
+            padding: '4px 2px',
+            minHeight: '32px',
             boxSizing: 'border-box',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'flex-start',
-            fontSize: '0.75rem',
-            zIndex: 3, // Ensure all blocks have z-index lower than headers
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+            fontWeight: 600,
+            fontSize: '0.85rem',
+            zIndex: 3,
             cursor: 'pointer',
+            boxShadow: '0 2px 8px 0 rgba(36,81,255,0.10)',
+            border: '1.5px solid rgba(36,81,255,0.15)',
+            overflow: 'hidden',
         };
         
-        if (appointment) { // For provider mode, show different colors based on appointment status
+        if (appointment) {
+            // Appointment block styling based on status
             const statusColors = {
-                confirmed: {
-                    bg: '#d4edda', // Light green
-                    border: '#c3e6cb',
-                    hover: '#c3e6cb',
-                    text: '#155724'
-                },
-                pending: { bg: '#fff3cd', // Light yellow
+                pending: {
+                    bg: '#fff3cd',
                     border: '#ffeeba',
-                    hover: '#ffeeba',
                     text: '#856404'
                 },
-                cancelled: { bg: '#f8d7da', // Light red
+                confirmed: {
+                    bg: '#d4edda',
+                    border: '#c3e6cb',
+                    text: '#155724'
+                },
+                cancelled: {
+                    bg: '#f8d7da',
                     border: '#f5c6cb',
-                    hover: '#f5c6cb',
                     text: '#721c24'
                 },
-                completed: { bg: '#cce5ff', // Light blue
+                completed: {
+                    bg: '#cce5ff',
                     border: '#b8daff',
-                    hover: '#b8daff',
                     text: '#004085'
                 }
             };
-            
-            const colorSet = statusColors[appointment.status] || statusColors.confirmed;
-            
+
+            const status = appointment.status || 'pending';
+            const colors = statusColors[status] || statusColors.pending;
+
             return {
                 ...commonStyles,
-                backgroundColor: colorSet.bg,
-                border: `1px solid ${colorSet.border}`,
-                color: colorSet.text,
-                zIndex: 4, // Higher than availability blocks but still below headers
-                '&:hover': { backgroundColor: colorSet.hover },
-                // Make it slightly narrower than availability blocks
+                backgroundColor: colors.bg,
+                color: colors.text,
+                border: `1.5px solid ${colors.border}`,
                 width: 'calc(100% - 12px)',
-                left: '2px'
+                left: '6px',
+                zIndex: 4, // Ensure appointments appear above availability blocks
             };
         } else if (isUserAppointment) {
             return {
                 ...commonStyles,
-                backgroundColor: '#d4edda', // Light green color for user's booked appointments
-                border: '1px solid #c3e6cb',
-                color: '#155724',
-                cursor: 'default',
-                '&:hover': {
-                    backgroundColor: '#c3e6cb',
-                }
+                backgroundColor: '#ffd200',
+                color: '#23203a',
+                border: '1.5px solid #ffd200',
+                zIndex: 4,
             };
         } else if (mode === 'consumer') {
-            return {
-                ...commonStyles,
-                backgroundColor: '#e3f2fd',
-                border: '1px solid #90caf9',
-                '&:hover': {
-                    backgroundColor: '#bbdefb',
-                    borderColor: '#1976d2',
-                }
-            };
+            if (block.discountPercentage > 0) {
+                return {
+                    ...commonStyles,
+                    backgroundColor: '#388e3c',
+                    color: '#fff',
+                    border: '1.5px solid #388e3c',
+                    zIndex: 3,
+                };
+            } else {
+                return {
+                    ...commonStyles,
+                    backgroundColor: '#232a5c',
+                    color: '#fff',
+                    border: '1.5px solid #232a5c',
+                    zIndex: 3,
+                };
+            }
         } else {
-            // For provider mode (availability blocks)
-            const hasDiscount = block.discountPercentage > 0;
-            return {
-                ...commonStyles,
-                backgroundColor: hasDiscount ? '#e8f5e9' : '#e3f2fd',  // Light green BG for discounted slots
-                border: `1px solid ${hasDiscount ? '#a5d6a7' : '#90caf9'}`,
-                '&:hover': {
-                    backgroundColor: hasDiscount ? '#c8e6c9' : '#bbdefb',
-                    borderColor: hasDiscount ? '#81c784' : '#1976d2',
-                },
-                // In provider mode, show edit/delete buttons on hover
-                '&:hover .block-actions': {
-                    display: mode === 'provider' ? 'flex' : 'none',
-                }
-            };
+            // Provider mode (availability blocks)
+            if (block.discountPercentage > 0) {
+                return {
+                    ...commonStyles,
+                    backgroundColor: '#388e3c',
+                    color: '#fff',
+                    border: '1.5px solid #388e3c',
+                    zIndex: 3,
+                };
+            } else {
+                return {
+                    ...commonStyles,
+                    backgroundColor: '#232a5c',
+                    color: '#fff',
+                    border: '1.5px solid #232a5c',
+                    zIndex: 3,
+                };
+            }
         }
     };
 
@@ -957,16 +980,17 @@ const AppointmentCalendar = forwardRef(({ mode,
         const dateStr = format(day, 'yyyy-MM-dd');
         const blocks = timeBlocks[dateStr] || [];
         const dayAppointments = getAppointmentsForDay(day);
+        const providerDayAppointments = getProviderAppointmentsForDay(day);
         
         // Debug logging
-        if (hour === 8) { // Only log once per day to avoid console spam
-            console.log(`Rendering day ${dateStr} with ${dayAppointments.length} appointments and ${blocks.length} available blocks`);
-            if (blocks.length > 0) {
-                console.log('Available blocks for this day:', blocks);
-            }
-            if (dayAppointments.length > 0) {
-                console.log('Appointments for this day:', dayAppointments);
-            }
+        if (hour === 5) { // Only log once per day to avoid console spam
+            console.log(`Rendering day ${dateStr}:`, {
+                blocks: blocks.length,
+                dayAppointments: dayAppointments.length,
+                providerDayAppointments: providerDayAppointments.length,
+                mode: mode,
+                providerId: providerId
+            });
         }
 
         // Find if there's an appointment at this hour
@@ -977,19 +1001,28 @@ const AppointmentCalendar = forwardRef(({ mode,
             blockStart.setHours(hour, 0, 0);
             const blockEnd = new Date(day);
             blockEnd.setHours(hour + 1, 0, 0);
-            const overlaps = areIntervalsOverlapping(
+            return areIntervalsOverlapping(
                 { start: aptStart, end: aptEnd },
                 { start: blockStart, end: blockEnd }
             );
-            if (overlaps && hour === 8) { // Only log for hour 8 to prevent spam
-                console.log(`Found appointment that overlaps with hour ${hour}:`, apt);
-            }
-            return overlaps;
+        });
+
+        // Find if there's a provider appointment at this hour
+        const providerAppointment = providerDayAppointments.find(apt => {
+            const aptStart = new Date(apt.start_time);
+            const aptEnd = new Date(apt.end_time);
+            const blockStart = new Date(day);
+            blockStart.setHours(hour, 0, 0);
+            const blockEnd = new Date(day);
+            blockEnd.setHours(hour + 1, 0, 0);
+            return areIntervalsOverlapping(
+                { start: aptStart, end: aptEnd },
+                { start: blockStart, end: blockEnd }
+            );
         });
 
         // Find if there's an availability block at this hour
         const block = blocks.find(block => {
-            // Ensure we have valid Date objects for comparison
             const blockStart = block.start instanceof Date ? block.start : new Date(block.start);
             const blockEnd = block.end instanceof Date ? block.end : new Date(block.end);
             const hourStart = new Date(day);
@@ -1002,33 +1035,8 @@ const AppointmentCalendar = forwardRef(({ mode,
             );
         });
 
-        if (appointment) {
-            const startTime = new Date(appointment.start_time);
-            const endTime = new Date(appointment.end_time);
-            
-            return (
-                <Box
-                    key={`appointment-${dateStr}-${appointment.id}-${hour}`}
-                    className="appointment-block"
-                    sx={getBlockStyle({}, false, appointment)}
-                    onClick={() => {
-                        if (mode === 'provider') {
-                            handleProviderAppointmentClick(appointment);
-                        } else {
-                            handleAppointmentClick(appointment);
-                        }
-                    }}
-                >
-                    <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
-                        {format(startTime, 'h:mm a')} - {format(endTime, 'h:mm a')}
-                    </Typography>
-                    <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                        {appointment.service.name} - {appointment.consumer.username}
-                    </Typography>
-                </Box>
-            );
-        } else if (block) {
-            // Ensure block.start and block.end are Date objects before calling getHours/getMinutes
+        // First render the availability block if it exists
+        if (block) {
             const startDate = block.start instanceof Date ? block.start : new Date(block.start);
             const endDate = block.end instanceof Date ? block.end : new Date(block.end);
             
@@ -1038,9 +1046,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
             const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
 
-            // Check if block has discount data
-            const hasDiscount = block.discountPercentage > 0;
-
             return (
                 <Box
                     key={`block-${block.id}-${hour}`}
@@ -1048,99 +1053,105 @@ const AppointmentCalendar = forwardRef(({ mode,
                     sx={getBlockStyle(block, false, null)}
                     onClick={() => {
                         if (mode === 'provider') {
-                            handleBlockClick(block);
+                            handleEditBlock(day, block);
                         } else if (mode === 'consumer' && onBlockClick) {
                             onBlockClick(block);
                         }
                     }}
                 >
-                    <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
-                        {format(startDate, 'h:mm a')} - {format(endDate, 'h:mm a')}
-                    </Typography>
-                    <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                        Available
-                    </Typography>
-                    
-                    {/* Edit/Delete buttons for provider mode */}
+                    {block.discountPercentage > 0 ? (
+                        <>
+                            <Typography variant="caption" sx={{ fontSize: '0.85rem', fontWeight: 600, color: 'inherit', width: '100%', textAlign: 'center', mb: 0.5, lineHeight: 1 }}>
+                                Discounted
+                            </Typography>
+                            <Typography variant="caption" sx={{ fontSize: '0.85rem', color: 'inherit', width: '100%', textAlign: 'center', lineHeight: 1 }}>
+                                <span style={{ textDecoration: 'line-through', color: '#e0e0e0', marginRight: 4 }}>${block.originalPrice}</span>
+                                <span style={{ color: '#ffd200', fontWeight: 700 }}>${block.discountedPrice}</span>
+                            </Typography>
+                        </>
+                    ) : (
+                        <Typography variant="caption" sx={{ fontSize: '0.85rem', fontWeight: 600, color: 'inherit', width: '100%', textAlign: 'center', lineHeight: 1 }}>
+                            Available{mode === 'consumer' && service ? `  $${service.price}` : ''}
+                        </Typography>
+                    )}
                     {mode === 'provider' && (
-                        <Box 
-                            className="block-actions"
-                            sx={{
-                                position: 'absolute',
-                                top: 2,
-                                right: 2,
-                                display: 'none',
-                                flexDirection: 'row',
-                                gap: '2px',
-                                backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                                borderRadius: '2px',
-                                zIndex: 5 // Ensure buttons are on top
-                            }}
-                        >
-                            <Tooltip title="Edit">
-                                <IconButton 
-                                    size="small" 
-                                    onClick={(e) => handleEditBlock(day, block, e)}
-                                    sx={{ padding: '2px' }}
-                                >
-                                    <EditIcon sx={{ fontSize: '0.875rem' }} />
-                                </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Delete">
-                                <IconButton 
-                                    size="small" 
-                                    onClick={(e) => handleDeleteBlockClick(day, block, e)}
-                                    sx={{ padding: '2px' }}
-                                >
-                                    <DeleteIcon sx={{ fontSize: '0.875rem' }} />
-                                </IconButton>
-                            </Tooltip>
+                        <Box sx={{ position: 'absolute', right: 4, top: 4, display: 'flex', gap: 0.5 }}>
+                            <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEditBlock(day, block);
+                                }}
+                                sx={{ 
+                                    p: 0.5,
+                                    color: 'inherit',
+                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' }
+                                }}
+                            >
+                                <EditIcon sx={{ fontSize: '0.8rem' }} />
+                            </IconButton>
+                            <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteBlockClick(day, block);
+                                }}
+                                sx={{ 
+                                    p: 0.5,
+                                    color: 'inherit',
+                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' }
+                                }}
+                            >
+                                <DeleteIcon sx={{ fontSize: '0.8rem' }} />
+                            </IconButton>
                         </Box>
                     )}
-                    
-                    {mode === 'consumer' && service && (
-                        <>
-                            {block.discountPercentage > 0 ? (
-                                <Box sx={{ 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
-                                    gap: 0.5,
-                                    mt: 0.5,
-                                    flexWrap: 'nowrap'
-                                }}>
-                                    <Typography variant="caption" sx={{ 
-                                        fontSize: '0.65rem', 
-                                        color: 'text.secondary',
-                                        textDecoration: 'line-through',
-                                        flexShrink: 0
-                                    }}>
-                                        ${block.originalPrice}
-                                    </Typography>
-                                    <Typography variant="caption" sx={{ 
-                                        fontSize: '0.65rem',
-                                        color: 'success.main',
-                                        bgcolor: 'success.light',
-                                        px: 0.5,
-                                        borderRadius: '2px',
-                                        flexShrink: 0
-                                    }}>
-                                        -{block.discountPercentage}%
-                                    </Typography>
-                                    <Typography variant="caption" sx={{ 
-                                        fontSize: '0.7rem', 
-                                        fontWeight: 'bold',
-                                        color: 'success.main',
-                                        flexShrink: 0
-                                    }}>
-                                        ${block.discountedPrice}
-                                    </Typography>
-                                </Box>
-                            ) : (
-                                <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block', color: 'primary.main' }}>
-                                    ${service.price}
-                                </Typography>
-                            )}
-                        </>
+                </Box>
+            );
+        }
+
+        // Then render the appointment if it exists
+        if (appointment || providerAppointment) {
+            const apt = appointment || providerAppointment;
+            return (
+                <Box
+                    key={`appointment-${dateStr}-${apt.id}-${hour}`}
+                    className="appointment-block"
+                    sx={getBlockStyle({}, false, apt)}
+                    onClick={() => {
+                        if (mode === 'provider') {
+                            handleProviderAppointmentClick(apt);
+                        } else {
+                            handleAppointmentClick(apt);
+                        }
+                    }}
+                >
+                    <Typography variant="caption" sx={{ 
+                        fontSize: '0.85rem', 
+                        fontWeight: 600, 
+                        color: 'inherit', 
+                        width: '100%', 
+                        overflow: 'hidden', 
+                        textOverflow: 'ellipsis', 
+                        whiteSpace: 'nowrap', 
+                        textAlign: 'center',
+                        px: 1
+                    }}>
+                        {apt.service?.name || 'Booked'}
+                    </Typography>
+                    {apt.consumer?.username && (
+                        <Typography variant="caption" sx={{ 
+                            fontSize: '0.8rem', 
+                            color: 'inherit', 
+                            width: '100%', 
+                            overflow: 'hidden', 
+                            textOverflow: 'ellipsis', 
+                            whiteSpace: 'nowrap', 
+                            textAlign: 'center',
+                            px: 1
+                        }}>
+                            {apt.consumer.username}
+                        </Typography>
                     )}
                 </Box>
             );
@@ -1698,6 +1709,9 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             )}
                                             
                                             {/* Time blocks for available slots */}
+                                            {renderTimeBlock(day, 5)}
+                                            {renderTimeBlock(day, 6)}
+                                            {renderTimeBlock(day, 7)}
                                             {renderTimeBlock(day, 8)}
                                             {renderTimeBlock(day, 9)}
                                             {renderTimeBlock(day, 10)}
@@ -1710,6 +1724,9 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             {renderTimeBlock(day, 17)}
                                             {renderTimeBlock(day, 18)}
                                             {renderTimeBlock(day, 19)}
+                                            {renderTimeBlock(day, 20)}
+                                            {renderTimeBlock(day, 21)}
+                                            {renderTimeBlock(day, 22)}
                                                         </Box>
                                                     </Box>
                                                 );

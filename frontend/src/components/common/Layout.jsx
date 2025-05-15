@@ -38,6 +38,16 @@ const Layout = ({ children }) => {
         <>
             <AppBar position="static">
                 <Toolbar>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mr: 2 }}>
+                        <Link component={RouterLink} to="/" sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box
+                                component="img"
+                                src="/viciniti-logo.png"
+                                alt="Viciniti Logo"
+                                sx={{ width: 40, height: 40, mr: 1 }}
+                            />
+                        </Link>
+                    </Box>
                     <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
                         <Link component={RouterLink} to="/" color="inherit" underline="none">
                             Viciniti
