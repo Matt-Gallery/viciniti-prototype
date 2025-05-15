@@ -7,4 +7,5 @@ libgeotiff-dev
 libhdf4-alt-dev
 libhdf5-dev
 libnetcdf-dev
-libspatialite-dev 
+libspatialite-dev
+libgdal34t64 
