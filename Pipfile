@@ -9,6 +9,7 @@ django = "*"
 psycopg2-binary = "*"
 djangorestframework = "*"
 leaflet = "*"
+django-geojson = "*"
 [dev-packages]
 
 [requires]
