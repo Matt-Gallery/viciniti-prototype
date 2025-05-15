@@ -10,6 +10,11 @@ psycopg2-binary = "*"
 djangorestframework = "*"
 leaflet = "*"
 django-geojson = "*"
+python-dotenv = "*"
+whitenoise = "*"
+gunicorn = "*"
+dj-database-url = "*"
+
 [dev-packages]
 
 [requires]
