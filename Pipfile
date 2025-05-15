@@ -8,7 +8,7 @@ django-cors-headers = "*"
 django = "*"
 psycopg2-binary = "*"
 djangorestframework = "*"
-
+leaflet = "*"
 [dev-packages]
 
 [requires]
