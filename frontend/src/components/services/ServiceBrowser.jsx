@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
     Box,
     Typography,
@@ -15,7 +15,8 @@ import {
     DialogTitle,
     DialogContent,
     DialogActions,
-    TextField
+    TextField,
+    Grid
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { services, appointments } from '../../services/api';
@@ -25,6 +26,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 const ServiceBrowser = () => {
     const navigate = useNavigate();
+    const calendarRefs = useRef({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [serviceList, setServiceList] = useState([]);
@@ -107,8 +109,6 @@ const ServiceBrowser = () => {
     const handleBlockClick = (service, block) => {
         console.log('Selected service');
         console.log('Selected time block');
-        console.log('Block start');
-        console.log('Block end');
         
         setSelectedService(service);
         setSelectedSlot(block);
@@ -118,15 +118,84 @@ const ServiceBrowser = () => {
         if (userStr) {
             try {
                 const userData = JSON.parse(userStr);
-                setBookingData({
+                console.log('User data from localStorage:', userData);
+                
+                // Initialize booking data with user information
+                const initialData = {
                     email: userData.email || '',
-                    phone: userData.phone || '',
-                    address: userData.address || '',
+                    // IMPORTANT: Map from backend phone_number field to our phone field
+                    phone: userData.phone_number || '',
+                    // Map address fields correctly
+                    address_line1: userData.street_address || '',
+                    address_line2: userData.apartment || '',
+                    city: userData.city || '',
+                    state: userData.state || '',
+                    zip_code: userData.zip_code || '',
+                    notes: ''
+                };
+                
+                // If we don't have the new address fields, try to parse from the legacy address field
+                if (userData.address && (!userData.street_address || !userData.city)) {
+                    console.log('Parsing from legacy address:', userData.address);
+                    const addressLines = userData.address.split(/\n|,/).map(line => line.trim());
+                    
+                    if (addressLines.length >= 1) {
+                        initialData.address_line1 = addressLines[0] || '';
+                    }
+                    
+                    if (addressLines.length >= 2) {
+                        // Check if second line looks like an apartment/suite
+                        if (addressLines[1] && (
+                            addressLines[1].toLowerCase().includes('apt') || 
+                            addressLines[1].toLowerCase().includes('suite') || 
+                            addressLines[1].toLowerCase().includes('#')
+                        )) {
+                            initialData.address_line2 = addressLines[1];
+                            
+                            // If we have more lines, try to parse city, state, zip
+                            if (addressLines.length >= 3) {
+                                const cityStateZip = addressLines[2].split(/\s+/);
+                                if (cityStateZip.length >= 1) initialData.city = cityStateZip[0];
+                                if (cityStateZip.length >= 2) initialData.state = cityStateZip[1];
+                                if (cityStateZip.length >= 3) initialData.zip_code = cityStateZip[2];
+                            }
+                        } else {
+                            // Assume it's city, state, zip
+                            const cityStateZip = addressLines[1].split(/\s+/);
+                            if (cityStateZip.length >= 1) initialData.city = cityStateZip[0];
+                            if (cityStateZip.length >= 2) initialData.state = cityStateZip[1];
+                            if (cityStateZip.length >= 3) initialData.zip_code = cityStateZip[2];
+                        }
+                    }
+                }
+                
+                console.log('Pre-populating form with data:', initialData);
+                setBookingData(initialData);
+            } catch (e) {
+                console.error('Error parsing user data', e);
+                setBookingData({
+                    email: '',
+                    phone: '',
+                    address_line1: '',
+                    address_line2: '',
+                    city: '',
+                    state: '',
+                    zip_code: '',
                     notes: ''
                 });
-            } catch (e) {
-                console.error('Error parsing user data');
             }
+        } else {
+            console.log('No user data found in localStorage');
+            setBookingData({
+                email: '',
+                phone: '',
+                address_line1: '',
+                address_line2: '',
+                city: '',
+                state: '',
+                zip_code: '',
+                notes: ''
+            });
         }
         
         setBookingDialogOpen(true);
@@ -141,6 +210,28 @@ const ServiceBrowser = () => {
             ...prev,
             [name]: value
         }));
+
+        // If address fields change, update the combined address field
+        if(['address_line1', 'address_line2', 'city', 'state', 'zip_code'].includes(name)) {
+            const updatedFormData = {
+                ...bookingData,
+                [name]: value
+            };
+            
+            // Combine the address fields
+            let addressParts = [];
+            if (updatedFormData.address_line1) addressParts.push(updatedFormData.address_line1);
+            if (updatedFormData.address_line2) addressParts.push(updatedFormData.address_line2);
+            
+            let cityStateZip = [];
+            if (updatedFormData.city) cityStateZip.push(updatedFormData.city);
+            if (updatedFormData.state) cityStateZip.push(updatedFormData.state);
+            if (updatedFormData.zip_code) cityStateZip.push(updatedFormData.zip_code);
+            
+            if (cityStateZip.length > 0) {
+                addressParts.push(cityStateZip.join(', '));
+            }
+        }
     };
     
     // Handle booking confirmation
@@ -153,6 +244,31 @@ const ServiceBrowser = () => {
             return;
         }
         
+        if (!bookingData.phone) {
+            setBookingError('Phone number is required');
+            return;
+        }
+        
+        if (!bookingData.address_line1) {
+            setBookingError('Street address is required');
+            return;
+        }
+        
+        if (!bookingData.city) {
+            setBookingError('City is required');
+            return;
+        }
+        
+        if (!bookingData.state) {
+            setBookingError('State is required');
+            return;
+        }
+        
+        if (!bookingData.zip_code) {
+            setBookingError('ZIP code is required');
+            return;
+        }
+        
         try {
             setBookingInProgress(true);
             
@@ -162,7 +278,15 @@ const ServiceBrowser = () => {
                 start_time: selectedSlot.start.toISOString(),
                 end_time: selectedSlot.end.toISOString(),
                 status: 'pending',
-                notes: bookingData.notes
+                notes: bookingData.notes,
+                client_email: bookingData.email,
+                client_phone: bookingData.phone || '',
+                address_line1: bookingData.address_line1 || '',
+                address_line2: bookingData.address_line2 || '',
+                city: bookingData.city || '',
+                state: bookingData.state || '',
+                zip_code: bookingData.zip_code || '',
+                country: 'United States'
             };
             
             // Call API to create appointment
@@ -171,12 +295,18 @@ const ServiceBrowser = () => {
             setBookingSuccess(true);
             setBookingInProgress(false);
             
-            // After success, close dialog after 2 seconds
+            // After success, close dialog after 2 seconds and refresh the calendar
             setTimeout(() => {
                 setBookingDialogOpen(false);
                 setBookingSuccess(false);
                 setSelectedService(null);
                 setSelectedSlot(null);
+                
+                // Refresh the calendar for this service
+                if (calendarRefs.current[selectedService.id]) {
+                    console.log('Refreshing calendar after booking');
+                    calendarRefs.current[selectedService.id].fetchUserAppointments();
+                }
             }, 2000);
             
         } catch (error) {
@@ -314,6 +444,7 @@ const ServiceBrowser = () => {
                                                     </Typography>
                                                     <Box sx={{ height: '450px', width: '100%', overflow: 'hidden' }}>
                                                         <AppointmentCalendar
+                                                            ref={el => calendarRefs.current[service.id] = el}
                                                             mode="consumer"
                                                             serviceId={service.id}
                                                             service={service}
@@ -415,22 +546,73 @@ const ServiceBrowser = () => {
                             />
                             
                             <TextField
-                                label="Phone (optional)"
+                                label="Phone"
                                 name="phone"
                                 value={bookingData.phone || ''}
+                                onChange={handleInputChange}
+                                fullWidth
+                                required
+                                margin="dense"
+                            />
+                            
+                            <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>
+                                Address Information
+                            </Typography>
+                            
+                            <TextField
+                                label="Street Address"
+                                name="address_line1"
+                                value={bookingData.address_line1 || ''}
+                                onChange={handleInputChange}
+                                fullWidth
+                                required
+                                margin="dense"
+                            />
+                            
+                            <TextField
+                                label="Apartment/Suite/Unit (optional)"
+                                name="address_line2"
+                                value={bookingData.address_line2 || ''}
                                 onChange={handleInputChange}
                                 fullWidth
                                 margin="dense"
                             />
                             
-                            <TextField
-                                label="Address (optional)"
-                                name="address"
-                                value={bookingData.address || ''}
-                                onChange={handleInputChange}
-                                fullWidth
-                                margin="dense"
-                            />
+                            <Grid container spacing={2} sx={{ mt: 0 }}>
+                                <Grid item xs={12} sm={5}>
+                                    <TextField
+                                        fullWidth
+                                        label="City"
+                                        name="city"
+                                        value={bookingData.city || ''}
+                                        onChange={handleInputChange}
+                                        required
+                                        margin="dense"
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={3}>
+                                    <TextField
+                                        fullWidth
+                                        label="State"
+                                        name="state"
+                                        value={bookingData.state || ''}
+                                        onChange={handleInputChange}
+                                        required
+                                        margin="dense"
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={4}>
+                                    <TextField
+                                        fullWidth
+                                        label="ZIP Code"
+                                        name="zip_code"
+                                        value={bookingData.zip_code || ''}
+                                        onChange={handleInputChange}
+                                        required
+                                        margin="dense"
+                                    />
+                                </Grid>
+                            </Grid>
                             
                             <TextField
                                 label="Special Requests or Notes (optional)"

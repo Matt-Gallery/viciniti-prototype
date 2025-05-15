@@ -7,7 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.urls import reverse_lazy
-from .models import User, Service, ServiceProvider, Appointment, ProviderAvailability
+from .models import User, Service, ServiceProvider, Appointment, ProviderAvailability, ProximityDiscountConfig
 from .forms import UserRegistrationForm, ServiceProviderForm, ServiceForm, AppointmentForm
 from rest_framework.authtoken.models import Token
 from django.contrib.auth.password_validation import validate_password
@@ -15,6 +15,7 @@ from django.core.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.utils import timezone
 import datetime
+import uuid
 
 # For parsing ISO format datetimes
 from dateutil.parser import parse as parse_datetime
@@ -43,6 +44,13 @@ class RegisterAPI(APIView):
             user_type = request.data.get('user_type')
             phone_number = request.data.get('phone_number', '')
             address = request.data.get('address', '')
+            
+            # Extract expanded address fields
+            street_address = request.data.get('street_address', '')
+            apartment = request.data.get('apartment', '')
+            city = request.data.get('city', '')
+            state = request.data.get('state', '')
+            zip_code = request.data.get('zip_code', '')
             
             print(f"DEBUG RegisterAPI: username={username}, email={email}, password_length={len(password) if password else 0}, user_type={user_type}")
             
@@ -95,21 +103,70 @@ class RegisterAPI(APIView):
                 password=password,
                 user_type=user_type,
                 phone_number=phone_number,
-                address=address
+                address=address,
+                street_address=street_address,
+                apartment=apartment,
+                city=city,
+                state=state,
+                zip_code=zip_code
             )
+            
+            # Geocode the address if we have enough information
+            if street_address and city and state:
+                try:
+                    print(f"DEBUG RegisterAPI: Geocoding address during registration")
+                    from .utils.geo_utils import get_location_from_address
+                    
+                    address_components = {
+                        'address_line1': street_address,
+                        'city': city,
+                        'state': state,
+                        'zip_code': zip_code,
+                        'country': 'USA'
+                    }
+                    
+                    # Get location point from address
+                    location = get_location_from_address(address_components)
+                    
+                    if location:
+                        print(f"DEBUG RegisterAPI: Successfully geocoded to {location.y}, {location.x}")
+                        user.location = location
+                        user.latitude = location.y
+                        user.longitude = location.x
+                        user.save()
+                    else:
+                        print(f"DEBUG RegisterAPI: Failed to geocode address during registration")
+                except Exception as e:
+                    print(f"DEBUG RegisterAPI: Error geocoding address: {str(e)}")
             
             # Create token
             token, _ = Token.objects.get_or_create(user=user)
             print(f"DEBUG RegisterAPI: User created successfully. Token: {token.key}")
             
+            user_data = {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'user_type': user.user_type,
+                'phone_number': user.phone_number,
+                'address': user.address,
+                'street_address': user.street_address,
+                'apartment': user.apartment,
+                'city': user.city,
+                'state': user.state,
+                'zip_code': user.zip_code
+            }
+            
+            # Add location data if geocoding was successful
+            if user.location:
+                user_data['location'] = {
+                    'latitude': user.location.y,
+                    'longitude': user.location.x
+                }
+            
             return Response({
                 'token': token.key,
-                'user': {
-                    'id': user.id,
-                    'username': user.username,
-                    'email': user.email,
-                    'user_type': user.user_type
-                }
+                'user': user_data
             }, http_status.HTTP_201_CREATED)
             
         except Exception as e:
@@ -164,6 +221,13 @@ class LoginAPI(APIView):
                     'username': user.username,
                     'email': user.email,
                     'user_type': user.user_type,
+                    'phone_number': user.phone_number,
+                    'address': user.address,
+                    'street_address': user.street_address,
+                    'apartment': user.apartment,
+                    'city': user.city,
+                    'state': user.state,
+                    'zip_code': user.zip_code,
                     'needs_setup': needs_setup
                 }
             })
@@ -387,6 +451,71 @@ class ServiceDetailAPI(APIView):
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def put(self, request, service_id):
+        """Update service by ID"""
+        try:
+            # Check if user is authenticated
+            if not request.user.is_authenticated:
+                return Response({
+                    'error': 'Authentication required'
+                }, http_status.HTTP_401_UNAUTHORIZED)
+            
+            # Check if user is a provider
+            if request.user.user_type != 'provider':
+                return Response({
+                    'error': 'Only service providers can update services'
+                }, http_status.HTTP_403_FORBIDDEN)
+                
+            from .models import Service
+            try:
+                # Get the service and check if it belongs to this provider
+                service = Service.objects.get(id=service_id, provider__user=request.user)
+                
+                # Extract data
+                name = request.data.get('name')
+                description = request.data.get('description')
+                price = request.data.get('price')
+                duration = request.data.get('duration')
+                category = request.data.get('category')
+                
+                # Update fields if provided
+                if name:
+                    service.name = name
+                if description:
+                    service.description = description
+                if price is not None:
+                    service.price = price
+                if duration is not None:
+                    service.duration = duration
+                if category:
+                    service.category = category
+                
+                service.save()
+                
+                return Response({
+                    'id': service.id,
+                    'name': service.name,
+                    'description': service.description,
+                    'price': service.price,
+                    'duration': service.duration,
+                    'category': service.category,
+                    'provider': {
+                        'id': service.provider.id,
+                        'business_name': service.provider.business_name,
+                        'business_description': service.provider.business_description,
+                    }
+                })
+                
+            except Service.DoesNotExist:
+                return Response({
+                    'error': 'Service not found or does not belong to this provider'
+                }, http_status.HTTP_404_NOT_FOUND)
+                
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
             
     def delete(self, request, service_id):
         """Delete service by ID"""
@@ -444,7 +573,12 @@ class UserProfileAPI(APIView):
             'email': user.email,
             'user_type': user.user_type,
             'phone_number': user.phone_number,
-            'address': user.address
+            'address': user.address,
+            'street_address': user.street_address,
+            'apartment': user.apartment,
+            'city': user.city,
+            'state': user.state,
+            'zip_code': user.zip_code
         })
         
     def put(self, request):
@@ -455,11 +589,21 @@ class UserProfileAPI(APIView):
             }, http_status.HTTP_401_UNAUTHORIZED)
         
         user = request.user
+        print(f"DEBUG UserProfileAPI: Updating profile for user {user.id} ({user.username})")
+        print(f"DEBUG UserProfileAPI: Request data: {request.data}")
         
         # Update fields if provided
         email = request.data.get('email')
         phone_number = request.data.get('phone_number')
         address = request.data.get('address')
+        street_address = request.data.get('street_address')
+        apartment = request.data.get('apartment')
+        city = request.data.get('city')
+        state = request.data.get('state')
+        zip_code = request.data.get('zip_code')
+        
+        # Track if address fields were updated to trigger geocoding
+        address_updated = False
         
         if email:
             # Check if email already exists but belongs to another user
@@ -474,17 +618,148 @@ class UserProfileAPI(APIView):
             
         if address is not None:
             user.address = address
+        
+        # Update new address fields
+        if street_address is not None:
+            user.street_address = street_address
+            address_updated = True
             
+        if apartment is not None:
+            user.apartment = apartment
+            
+        if city is not None:
+            user.city = city
+            address_updated = True
+            
+        if state is not None:
+            user.state = state
+            address_updated = True
+            
+        if zip_code is not None:
+            user.zip_code = zip_code
+            address_updated = True
+            
+        # If address fields are provided but address is not, create a combined address
+        if not address and any([street_address, apartment, city, state, zip_code]):
+            address_parts = []
+            if user.street_address:
+                address_parts.append(user.street_address)
+            if user.apartment:
+                address_parts.append(user.apartment)
+                
+            location_parts = []
+            if user.city:
+                location_parts.append(user.city)
+            if user.state:
+                location_parts.append(user.state)
+            if user.zip_code:
+                location_parts.append(user.zip_code)
+                
+            if location_parts:
+                address_parts.append(', '.join(location_parts))
+                
+            user.address = '\n'.join(address_parts)
+        
+        # Try to geocode the address if address fields were updated or if there's no location
+        should_geocode = address_updated or user.location is None
+        
+        if should_geocode and user.street_address and user.city and user.state:
+            try:
+                print(f"DEBUG UserProfileAPI: Geocoding address for {user.street_address}, {user.city}, {user.state}")
+                from .utils.geo_utils import get_location_from_address
+                
+                address_components = {
+                    'address_line1': user.street_address,
+                    'city': user.city,
+                    'state': user.state,
+                    'zip_code': user.zip_code,
+                    'country': 'USA'
+                }
+                
+                print(f"DEBUG UserProfileAPI: Geocoding with components: {address_components}")
+                
+                # Get location point from address
+                location = get_location_from_address(address_components)
+                
+                if location:
+                    print(f"DEBUG UserProfileAPI: Successfully geocoded to {location.y}, {location.x}")
+                    user.location = location
+                    # Also update the simple lat/lng fields for backward compatibility
+                    user.latitude = location.y
+                    user.longitude = location.x
+                else:
+                    print(f"DEBUG UserProfileAPI: Failed to geocode address")
+            except Exception as e:
+                print(f"DEBUG UserProfileAPI: Error geocoding user address: {str(e)}")
+                import traceback
+                traceback.print_exc()
+        
+        # Save the user after all updates
         user.save()
         
-        return Response({
+        # Update provider profile location if it exists
+        if hasattr(user, 'provider_profile') and user.location:
+            print(f"DEBUG UserProfileAPI: Updating provider profile location for provider {user.provider_profile.id}")
+            user.provider_profile.business_location = user.location
+            user.provider_profile.save()
+        
+        # Build response with complete user data
+        response_data = {
             'id': user.id,
             'username': user.username,
             'email': user.email,
             'user_type': user.user_type,
             'phone_number': user.phone_number,
-            'address': user.address
-        })
+            'address': user.address,
+            'street_address': user.street_address,
+            'apartment': user.apartment,
+            'city': user.city,
+            'state': user.state,
+            'zip_code': user.zip_code
+        }
+        
+        # Add location data if geocoding was successful
+        if user.location:
+            response_data['location'] = {
+                'latitude': user.location.y,
+                'longitude': user.location.x
+            }
+        
+        return Response(response_data)
+
+    def delete(self, request):
+        """Delete the user account"""
+        if not request.user.is_authenticated:
+            return Response({
+                'error': 'Authentication required'
+            }, http_status.HTTP_401_UNAUTHORIZED)
+        
+        user = request.user
+        
+        try:
+            # Delete the user's appointments
+            from .models import Appointment
+            Appointment.objects.filter(consumer=user).delete()
+            
+            # Delete the user's provider profile if it exists
+            if hasattr(user, 'provider_profile'):
+                user.provider_profile.delete()
+            
+            # Delete the user's auth token
+            from rest_framework.authtoken.models import Token
+            Token.objects.filter(user=user).delete()
+            
+            # Finally, delete the user
+            user.delete()
+            
+            return Response({
+                'message': 'Account deleted successfully'
+            }, http_status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Failed to delete account: {str(e)}'
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class PasswordChangeAPI(APIView):
     def put(self, request):
@@ -556,27 +831,60 @@ class ProviderSetupAPI(APIView):
         business_description = request.data.get('business_description')
         business_hours = request.data.get('business_hours', {})
         
+        # Extract address fields with defaults
+        address_line1 = request.data.get('address_line1', '')
+        address_line2 = request.data.get('address_line2', '')
+        city = request.data.get('city', '')
+        state = request.data.get('state', '')
+        postal_code = request.data.get('postal_code', '')
+        country = request.data.get('country', 'United States')
+        service_radius = request.data.get('service_radius', 10.0)
+        
         # Validate required fields
         if not all([business_name, business_description]):
             return Response({
                 'error': 'Business name and description are required'
             }, http_status.HTTP_400_BAD_REQUEST)
         
-        # Create provider profile
-        from .models import ServiceProvider
-        provider = ServiceProvider.objects.create(
-            user=request.user,
-            business_name=business_name,
-            business_description=business_description,
-            business_hours=business_hours
-        )
-        
-        return Response({
-            'id': provider.id,
-            'business_name': provider.business_name,
-            'business_description': provider.business_description,
-            'business_hours': provider.business_hours,
-        }, http_status.HTTP_201_CREATED)
+        try:
+            # Create provider profile
+            from .models import ServiceProvider
+            provider = ServiceProvider.objects.create(
+                user=request.user,
+                business_name=business_name,
+                business_description=business_description,
+                business_hours=business_hours,
+                address_line1=address_line1,
+                address_line2=address_line2,
+                city=city,
+                state=state,
+                postal_code=postal_code,
+                country=country,
+                service_radius=service_radius
+            )
+            
+            # Try to sync address from user if available
+            if not address_line1 and request.user.street_address:
+                provider.address_line1 = request.user.street_address
+                provider.address_line2 = request.user.apartment
+                provider.city = request.user.city
+                provider.state = request.user.state
+                provider.postal_code = request.user.zip_code
+                provider.save()
+            
+            return Response({
+                'id': provider.id,
+                'business_name': provider.business_name,
+                'business_description': provider.business_description,
+                'business_hours': provider.business_hours,
+            }, http_status.HTTP_201_CREATED)
+        except Exception as e:
+            print(f"Provider setup error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ProviderProfileAPI(APIView):
     def get(self, request):
@@ -776,82 +1084,92 @@ class ServiceAvailabilityAPI(APIView):
             availabilities = ProviderAvailability.objects.filter(provider=provider)
             print(f"DEBUG AVAILABILITY: Found {availabilities.count()} availability blocks")
             
-            # Organize availability by day
-            availability_data = {}
-            for avail in availabilities:
-                day_key = avail.day_of_week
-                if day_key not in availability_data:
-                    availability_data[day_key] = []
-                
-                # Create available time blocks
-                start_time = avail.start_time
-                end_time = avail.end_time
-                
-                # Calculate how many service slots fit in this availability block
-                duration_minutes = service.duration
-                
-                # Calculate total block minutes available
-                block_minutes = (end_time - start_time).total_seconds() / 60
-                print(f"DEBUG AVAILABILITY: Block {day_key} from {start_time} to {end_time} ({block_minutes} minutes)")
-                
-                # Calculate slots using service duration
-                available_slots = []
-                current_start = start_time
-                slot_index = 0
-                
-                # Loop until we can't fit another appointment
-                while True:
-                    # Calculate end time for this slot
-                    current_end = current_start + timezone.timedelta(minutes=duration_minutes)
-                    
-                    # If this slot would exceed the availability block, break
-                    if current_end > end_time:
-                        break
-                    
-                    # Create a slot
-                    slot = {
-                        'id': f"slot-{day_key}-{slot_index}",
-                        'start': current_start,
-                        'end': current_end,
-                        'duration': duration_minutes
-                    }
-                    
-                    # Check if slot overlaps with ANY buffered appointment block
-                    is_available = True
-                    for blocked in blocked_periods:
-                        # Only check same day blocked periods
-                        block_date = blocked['start'].strftime('%Y-%m-%d')
-                        slot_date = current_start.strftime('%Y-%m-%d')
-                        if block_date != slot_date:
-                            continue
-                            
-                        # Check if this slot overlaps with the blocked period
-                        # (slot starts before blocked period ends AND slot ends after blocked period starts)
-                        if slot['start'] < blocked['end'] and slot['end'] > blocked['start']:
-                            print(f"DEBUG AVAILABILITY: Slot {slot['id']} at {slot['start']} conflicts with appointment {blocked['original_appointment'].id} " + 
-                                  f"({blocked['original_appointment'].service.name}) at {blocked['original_appointment'].start_time} - {blocked['original_appointment'].end_time} " +
-                                  f"[buffered: {blocked['start']} - {blocked['end']}]")
-                            is_available = False
-                            break
-                    
-                    if is_available:
-                        available_slots.append(slot)
-                        print(f"DEBUG AVAILABILITY: Added available slot: {slot['id']} at {slot['start']}")
-                    
-                    # Move to the next potential slot - add duration PLUS buffer time for spacing between slots
-                    # This ensures each appointment has buffer time on both sides
-                    slot_index += 1
-                    current_start = current_start + timezone.timedelta(minutes=duration_minutes + buffer_minutes)
-                
-                # Add valid slots to the output
-                for slot in available_slots:
-                    availability_data[day_key].append({
-                        'id': slot['id'],
-                        'start': slot['start'].isoformat(),
-                        'end': slot['end'].isoformat()
-                    })
+            # Organize availability by date
+            date_availability = {}
             
-            return Response(availability_data)
+            # Show 14 days of availability starting from today
+            for i in range(14):
+                curr_date = timezone.now().date() + timezone.timedelta(days=i)
+                date_str = curr_date.strftime('%Y-%m-%d')
+                date_availability[date_str] = []
+                
+                # Get availability records that match this specific date
+                matching_avail = [avail for avail in availabilities if avail.day_of_week == date_str]
+                
+                if not matching_avail:
+                    # If no explicit date match, continue to next date
+                    continue
+                
+                for avail in matching_avail:
+                    # Create available time blocks
+                    start_time = avail.start_time
+                    end_time = avail.end_time
+                    
+                    # Calculate how many service slots fit in this availability block
+                    duration_minutes = service.duration
+                    
+                    # Calculate total block minutes available
+                    block_minutes = (end_time - start_time).total_seconds() / 60
+                    print(f"DEBUG AVAILABILITY: Block {date_str} from {start_time} to {end_time} ({block_minutes} minutes)")
+                    
+                    # Calculate slots using service duration
+                    available_slots = []
+                    current_start = start_time
+                    slot_index = 0
+                    
+                    # Loop until we can't fit another appointment
+                    while True:
+                        # Calculate end time for this slot
+                        current_end = current_start + timezone.timedelta(minutes=duration_minutes)
+                        
+                        # If this slot would exceed the availability block, break
+                        if current_end > end_time:
+                            break
+                        
+                        # Create a slot
+                        slot = {
+                            'id': f"slot-{date_str}-{slot_index}",
+                            'start': current_start,
+                            'end': current_end,
+                            'duration': duration_minutes
+                        }
+                        
+                        # Check if slot overlaps with ANY buffered appointment block
+                        is_available = True
+                        for blocked in blocked_periods:
+                            # Only check same day blocked periods
+                            block_date = blocked['start'].strftime('%Y-%m-%d')
+                            slot_date = current_start.strftime('%Y-%m-%d')
+                            if block_date != slot_date:
+                                continue
+                                
+                            # Check if this slot overlaps with the blocked period
+                            # (slot starts before blocked period ends AND slot ends after blocked period starts)
+                            if slot['start'] < blocked['end'] and slot['end'] > blocked['start']:
+                                print(f"DEBUG AVAILABILITY: Slot {slot['id']} at {slot['start']} conflicts with appointment {blocked['original_appointment'].id} " + 
+                                      f"({blocked['original_appointment'].service.name}) at {blocked['original_appointment'].start_time} - {blocked['original_appointment'].end_time} " +
+                                      f"[buffered: {blocked['start']} - {blocked['end']}]")
+                                is_available = False
+                                break
+                        
+                        if is_available:
+                            available_slots.append(slot)
+                            print(f"DEBUG AVAILABILITY: Added available slot: {slot['id']} at {slot['start']}")
+                        
+                        # Move to the next potential slot - add duration PLUS buffer time for spacing between slots
+                        # This ensures each appointment has buffer time on both sides
+                        slot_index += 1
+                        current_start = current_start + timezone.timedelta(minutes=duration_minutes + buffer_minutes)
+                    
+                    # Add valid slots to the output for this date
+                    for slot in available_slots:
+                        date_availability[date_str].append({
+                            'id': slot['id'],
+                            'start': slot['start'].isoformat(),
+                            'end': slot['end'].isoformat()
+                        })
+            
+            return Response(date_availability)
         except Service.DoesNotExist:
             return Response({
                 'error': 'Service not found'
@@ -863,6 +1181,308 @@ class ServiceAvailabilityAPI(APIView):
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ServiceAvailabilityWithDiscountAPI(APIView):
+    permission_classes = [AllowAny]  # Allow anyone to view availability
+
+    def get(self, request, service_id):
+        """Get availability for a specific service with discount calculations applied"""
+        try:
+            # Add debug logging
+            print(f"DEBUG AVAILABILITY: Calculating availability with discounts for service {service_id}")
+            print("!!!!! VERBOSE DEBUG: Starting discount calculation flow !!!!!")
+            
+            from .models import Service, ProviderAvailability, Appointment, ProximityDiscountConfig, User
+            from django.contrib.gis.db.models.functions import Distance
+            from django.contrib.gis.measure import D
+            
+            # Check if service exists
+            service = Service.objects.get(id=service_id)
+            
+            # Get provider associated with this service
+            provider = service.provider
+            print(f"DEBUG DISCOUNT: Found provider: {provider.business_name}")
+            
+            # Get the provider's discount configuration
+            discount_config = ProximityDiscountConfig.objects.filter(provider=provider).first()
+            
+            # Log the discount configuration
+            if discount_config:
+                print(f"!!!!! VERBOSE DEBUG: Found discount config: {discount_config.id} !!!!!")
+                print(f"DEBUG DISCOUNT CONFIG: Tiers and distances:")
+                print(f"  - Tier 1: 0-{discount_config.tier1_distance} yards - Discounts: {discount_config.tier1_1appt_discount}%-{discount_config.tier1_5appt_discount}%")
+                print(f"  - Tier 2: {discount_config.tier2_min_distance}-{discount_config.tier2_max_distance} yards - Discounts: {discount_config.tier2_1appt_discount}%-{discount_config.tier2_5appt_discount}%")
+                print(f"  - Tier 3: {discount_config.tier3_min_distance}-{discount_config.tier3_max_distance} yards - Discounts: {discount_config.tier3_1appt_discount}%-{discount_config.tier3_5appt_discount}%")
+                print(f"  - Tier 4: {discount_config.tier4_min_distance}-{discount_config.tier4_max_distance} yards - Discounts: {discount_config.tier4_1appt_discount}%-{discount_config.tier4_5appt_discount}%")
+            else:
+                print("!!!!! VERBOSE DEBUG: No discount config found for this provider !!!!!")
+            
+            # Check if discounts are enabled
+            discounts_enabled = discount_config and discount_config.is_active
+            print(f"DEBUG DISCOUNT: Discounts enabled: {discounts_enabled}")
+            
+            # Get existing appointments for this provider (not just this service)
+            existing_appointments = Appointment.objects.filter(
+                service__provider=provider,  # All provider appointments
+                status__in=['pending', 'confirmed']  # Only active appointments
+            )
+            
+            print(f"DEBUG DISCOUNT: Found {existing_appointments.count()} existing appointments")
+            
+            # Log more details about existing appointments
+            for idx, appt in enumerate(existing_appointments):
+                print(f"!!!!! VERBOSE DEBUG: Appointment {idx}: ID={appt.id}, Location={appt.location is not None}, " +
+                      f"Address={appt.address_line1}, {appt.city}, {appt.state}")
+                if appt.location:
+                    print(f"  - Lat/Lng: {appt.latitude}, {appt.longitude}")
+                else:
+                    print(f"  - NO LOCATION DATA FOR THIS APPOINTMENT")
+            
+            # Buffer time in minutes to add to both sides of appointments
+            buffer_minutes = 15
+            
+            # Create buffered time blocks for existing appointments
+            blocked_periods = []
+            for appointment in existing_appointments:
+                # Add buffer before and after the appointment
+                buffered_start = appointment.start_time - timezone.timedelta(minutes=buffer_minutes)
+                buffered_end = appointment.end_time + timezone.timedelta(minutes=buffer_minutes)
+                
+                blocked_periods.append({
+                    'start': buffered_start,
+                    'end': buffered_end,
+                    'original_appointment': appointment
+                })
+            
+            # Get provider's availabilities
+            availabilities = ProviderAvailability.objects.filter(provider=provider)
+            
+            # Get consumer's location from user profile if authenticated
+            consumer_location = None
+            if request.user.is_authenticated:
+                try:
+                    user = User.objects.get(id=request.user.id)
+                    consumer_location = user.location
+                    print(f"DEBUG DISCOUNT: Consumer location found: {consumer_location is not None}")
+                    if consumer_location:
+                        print(f"!!!!! VERBOSE DEBUG: Consumer has location: Lat={consumer_location.y}, Lng={consumer_location.x} !!!!!")
+                    else:
+                        print(f"!!!!! VERBOSE DEBUG: Consumer has NO location data !!!!!")
+                except Exception as e:
+                    print(f"DEBUG DISCOUNT: Error getting consumer location: {str(e)}")
+            else:
+                print(f"!!!!! VERBOSE DEBUG: No authenticated user, cannot calculate personalized discounts !!!!!")
+            
+            # Log a warning if user doesn't have location data
+            if request.user.is_authenticated and not consumer_location:
+                print(f"DEBUG DISCOUNT WARNING: User {request.user.id} is missing location data for discount calculations")
+                print(f"DEBUG USER ADDRESS: Street={request.user.street_address}, City={request.user.city}, State={request.user.state}, Zip={request.user.zip_code}")
+                
+                # Try to geocode the address now if fields are available
+                try:
+                    user = User.objects.get(id=request.user.id)
+                    if user.street_address and user.city and user.state:
+                        from .utils.geo_utils import get_location_from_address
+                        
+                        address_components = {
+                            'address_line1': user.street_address,
+                            'city': user.city,
+                            'state': user.state,
+                            'zip_code': user.zip_code,
+                            'country': 'USA'
+                        }
+                        
+                        print(f"DEBUG GEOCODING: Attempting to geocode {address_components}")
+                        
+                        # Get location point from address
+                        location = get_location_from_address(address_components)
+                        
+                        if location:
+                            print(f"DEBUG DISCOUNT: Successfully geocoded user location to {location.y}, {location.x}")
+                            user.location = location
+                            user.latitude = location.y
+                            user.longitude = location.x
+                            user.save()
+                            consumer_location = location
+                            print(f"DEBUG GEOCODING: Updated user record with new location")
+                except Exception as e:
+                    print(f"DEBUG DISCOUNT: Real-time geocoding failed: {str(e)}")
+            
+            # Organize availability by date
+            date_availability = {}
+            
+            # Show 14 days of availability starting from today
+            for i in range(14):
+                curr_date = timezone.now().date() + timezone.timedelta(days=i)
+                date_str = curr_date.strftime('%Y-%m-%d')
+                date_availability[date_str] = []
+                
+                # Get availability records that match this specific date
+                matching_avail = [avail for avail in availabilities if avail.day_of_week == date_str]
+                
+                if not matching_avail:
+                    # If no explicit date match, continue to next date
+                    continue
+                
+                for avail in matching_avail:
+                    # Create available time blocks
+                    start_time = avail.start_time
+                    end_time = avail.end_time
+                    
+                    # Calculate how many service slots fit in this availability block
+                    duration_minutes = service.duration
+                    
+                    # Calculate total block minutes available
+                    block_minutes = (end_time - start_time).total_seconds() / 60
+                    
+                    # Calculate slots using service duration
+                    available_slots = []
+                    current_start = start_time
+                    slot_index = 0
+                    
+                    # Loop until we can't fit another appointment
+                    while True:
+                        # Calculate end time for this slot
+                        current_end = current_start + timezone.timedelta(minutes=duration_minutes)
+                        
+                        # If this slot would exceed the availability block, break
+                        if current_end > end_time:
+                            break
+                        
+                        # Create a slot
+                        slot = {
+                            'id': f"slot-{date_str}-{slot_index}",
+                            'start': current_start,
+                            'end': current_end,
+                            'duration': duration_minutes,
+                            'original_price': float(service.price),
+                            'discount_percentage': 0,
+                            'discounted_price': float(service.price)
+                        }
+                        
+                        # Check if slot overlaps with ANY buffered appointment block
+                        is_available = True
+                        for blocked in blocked_periods:
+                            # Only check same day blocked periods
+                            block_date = blocked['start'].strftime('%Y-%m-%d')
+                            slot_date = current_start.strftime('%Y-%m-%d')
+                            if block_date != slot_date:
+                                continue
+                                
+                            # Check if this slot overlaps with the blocked period
+                            # (slot starts before blocked period ends AND slot ends after blocked period starts)
+                            if slot['start'] < blocked['end'] and slot['end'] > blocked['start']:
+                                is_available = False
+                                break
+                        
+                        # If the slot is available and discounts are enabled, calculate any applicable discount
+                        if is_available and discounts_enabled and consumer_location:
+                            print(f"!!!!! VERBOSE DEBUG: Calculating discount for slot {slot['id']} !!!!!")
+                            
+                            # Convert to a list to track proximity appointments and their distances
+                            nearby_appointments = []
+                            
+                            # Find nearby appointments (within maximum tier distance)
+                            max_distance = discount_config.tier4_max_distance  # Use the largest tier distance
+                            
+                            print(f"DEBUG DISCOUNT: Checking for nearby appointments within {max_distance} yards")
+                            
+                            for appt in existing_appointments:
+                                # Skip if appointment has no location
+                                if not appt.location or not consumer_location:
+                                    print(f"!!!!! VERBOSE DEBUG: Skipping appointment {appt.id} - Missing location data !!!!!")
+                                    continue
+                                    
+                                # Calculate distance between consumer and appointment location in yards
+                                # PostGIS uses meters for geography calculations
+                                try:
+                                    # Debug the locations we're comparing
+                                    print(f"!!!!! VERBOSE DEBUG: Calculating distance - Consumer({consumer_location.y},{consumer_location.x}) to Appt({appt.latitude},{appt.longitude}) !!!!!")
+                                    
+                                    distance_m = consumer_location.distance(appt.location) * 100000  # Convert to meters
+                                    distance_yards = distance_m * 1.09361  # Convert meters to yards
+                                    
+                                    print(f"!!!!! VERBOSE DEBUG: Appointment {appt.id} is {distance_yards:.2f} yards away !!!!!")
+                                    
+                                    if distance_yards <= max_distance:
+                                        nearby_appointments.append({
+                                            'appointment': appt,
+                                            'distance_yards': distance_yards
+                                        })
+                                        print(f"!!!!! VERBOSE DEBUG: Added to nearby appointments - within discount range !!!!!")
+                                    else:
+                                        print(f"!!!!! VERBOSE DEBUG: Appointment too far away ({distance_yards:.2f} yards) - max: {max_distance} !!!!!")
+                                except Exception as e:
+                                    print(f"!!!!! VERBOSE DEBUG: Distance calculation error: {str(e)} !!!!!")
+                            
+                            # Sort by distance (closest first)
+                            nearby_appointments.sort(key=lambda x: x['distance_yards'])
+                            
+                            print(f"!!!!! VERBOSE DEBUG: Found {len(nearby_appointments)} nearby appointments !!!!!")
+                            
+                            # If we have nearby appointments, calculate a discount
+                            if nearby_appointments:
+                                # Get the closest appointment's distance
+                                closest_distance = nearby_appointments[0]['distance_yards']
+                                appt_count = min(len(nearby_appointments), 5)  # Cap at 5 for discount tiers
+                                
+                                print(f"!!!!! VERBOSE DEBUG: About to call get_discount_for_distance_and_count with {closest_distance:.2f} yards and {appt_count} appointments !!!!!")
+                                
+                                # Calculate discount based on distance and appointment count
+                                discount_percentage = discount_config.get_discount_for_distance_and_count(
+                                    closest_distance, appt_count
+                                )
+                                
+                                print(f"!!!!! VERBOSE DEBUG: Calculated discount: {discount_percentage}% !!!!!")
+                                
+                                if discount_percentage > 0:
+                                    slot['discount_percentage'] = discount_percentage
+                                    slot['discounted_price'] = round(slot['original_price'] * (1 - discount_percentage / 100), 2)
+                                    print(f"!!!!! VERBOSE DEBUG: Applied {discount_percentage}% discount for slot {slot['id']} !!!!!")
+                                else:
+                                    print(f"!!!!! VERBOSE DEBUG: No discount applied - calculated percentage was 0% !!!!!")
+                            else:
+                                print(f"!!!!! VERBOSE DEBUG: No nearby appointments found !!!!!")
+                        elif not is_available:
+                            print(f"!!!!! VERBOSE DEBUG: Slot not available, skipping discount calculation !!!!!")
+                        elif not discounts_enabled:
+                            print(f"!!!!! VERBOSE DEBUG: Discounts not enabled for this provider !!!!!")
+                        elif not consumer_location:
+                            print(f"!!!!! VERBOSE DEBUG: No consumer location, cannot calculate distance-based discount !!!!!")
+                        
+                        if is_available:
+                            available_slots.append(slot)
+                        
+                        # Move to the next potential slot - add duration PLUS buffer time for spacing between slots
+                        # This ensures each appointment has buffer time on both sides
+                        slot_index += 1
+                        current_start = current_start + timezone.timedelta(minutes=duration_minutes + buffer_minutes)
+                    
+                    # Add available slots to the time block for this date
+                    for slot in available_slots:
+                        # Create new slot for the API response
+                        new_slot = {
+                            'id': slot['id'],
+                            'start': slot['start'].isoformat(),
+                            'end': slot['end'].isoformat(),
+                            'duration': slot['duration'],
+                            'original_price': slot['original_price'],
+                            'discount_percentage': slot['discount_percentage'],
+                            'discounted_price': slot['discounted_price']
+                        }
+                        date_availability[date_str].append(new_slot)
+            
+            print("!!!!! VERBOSE DEBUG: Completed discount calculations !!!!!")
+            return Response(date_availability)
+        
+        except Exception as e:
+            print(f"ERROR in ServiceAvailabilityWithDiscountAPI: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e)},
+                status=http_status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class AppointmentListAPI(APIView):
     permission_classes = [IsAuthenticated]
@@ -886,7 +1506,7 @@ class AppointmentListAPI(APIView):
             appointment_list = []
             for appointment in appointments:
                 appointment_list.append({
-                    'id': appointment.id,
+                    'id': str(appointment.id),  # Ensure UUID is converted to string
                     'service': {
                         'id': appointment.service.id,
                         'name': appointment.service.name,
@@ -912,6 +1532,9 @@ class AppointmentListAPI(APIView):
             
             return Response(appointment_list)
         except Exception as e:
+            import traceback
+            print(f"Error in AppointmentListAPI: {str(e)}")
+            traceback.print_exc()
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -941,6 +1564,14 @@ class AppointmentListAPI(APIView):
             end_time = request.data.get('end_time')
             notes = request.data.get('notes', '')
             status = request.data.get('status', 'pending')
+            
+            # Extract address fields
+            address_line1 = request.data.get('address_line1', '')
+            address_line2 = request.data.get('address_line2', '')
+            city = request.data.get('city', '')
+            state = request.data.get('state', '')
+            zip_code = request.data.get('zip_code', '')
+            country = request.data.get('country', 'United States')
             
             # Get service
             service = Service.objects.get(id=service_id)
@@ -996,19 +1627,54 @@ class AppointmentListAPI(APIView):
                 }, http_status.HTTP_409_CONFLICT)
             
             # Create appointment
-            appointment = Appointment.objects.create(
+            appointment = Appointment(
                 service=service,
                 consumer=request.user,
                 start_time=start_time,
                 end_time=end_time,
                 notes=notes,
-                status=status
+                status=status,
+                # Add address fields
+                address_line1=address_line1,
+                address_line2=address_line2,
+                city=city,
+                state=state,
+                zip_code=zip_code,
+                country=country,
+                id=uuid.uuid4()  # Explicitly set a UUID
             )
+            
+            # Try to geocode the address
+            if address_line1 and city and state:
+                try:
+                    from .utils.geo_utils import get_location_from_address
+                    
+                    address_components = {
+                        'address_line1': address_line1,
+                        'city': city,
+                        'state': state,
+                        'zip_code': zip_code,
+                        'country': country
+                    }
+                    
+                    # Get location point from address
+                    location = get_location_from_address(address_components)
+                    
+                    if location:
+                        appointment.location = location
+                        # Also update the simple lat/lng fields for backward compatibility
+                        appointment.latitude = location.y
+                        appointment.longitude = location.x
+                        print(f"DEBUG APPOINTMENT: Geocoded location: {location.y}, {location.x}")
+                except Exception as e:
+                    print(f"Error geocoding appointment address: {str(e)}")
+            
+            appointment.save()
             
             print(f"DEBUG APPOINTMENT: Successfully created appointment {appointment.id}")
             
             return Response({
-                'id': appointment.id,
+                'id': str(appointment.id),  # Convert UUID to string for JSON
                 'service': {
                     'id': appointment.service.id,
                     'name': appointment.service.name
@@ -1016,7 +1682,12 @@ class AppointmentListAPI(APIView):
                 'start_time': start_time,
                 'end_time': end_time,
                 'status': appointment.status,
-                'notes': appointment.notes
+                'notes': appointment.notes,
+                'address_line1': appointment.address_line1,
+                'address_line2': appointment.address_line2,
+                'city': appointment.city,
+                'state': appointment.state,
+                'zip_code': appointment.zip_code
             }, http_status.HTTP_201_CREATED)
             
         except Service.DoesNotExist:
@@ -1062,6 +1733,14 @@ class AppointmentDetailAPI(APIView):
                 'end_time': appointment.end_time.isoformat(),
                 'status': appointment.status,
                 'notes': appointment.notes,
+                'address': {
+                    'address_line1': appointment.address_line1,
+                    'address_line2': appointment.address_line2,
+                    'city': appointment.city,
+                    'state': appointment.state,
+                    'zip_code': appointment.zip_code,
+                    'country': appointment.country
+                },
                 'created_at': appointment.created_at.isoformat(),
                 'updated_at': appointment.updated_at.isoformat()
             })
@@ -1234,7 +1913,7 @@ class ProviderAppointmentListAPI(APIView):
             appointment_list = []
             for appointment in appointments:
                 appointment_list.append({
-                    'id': appointment.id,
+                    'id': str(appointment.id),  # Convert UUID to string
                     'service': {
                         'id': appointment.service.id,
                         'name': appointment.service.name,
@@ -1264,6 +1943,9 @@ class ProviderAppointmentListAPI(APIView):
                 'error': 'Provider not found'
             }, http_status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            import traceback
+            print(f"Error in ProviderAppointmentListAPI: {str(e)}")
+            traceback.print_exc()
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -1290,7 +1972,7 @@ class ConsumerAppointmentListAPI(APIView):
             appointment_list = []
             for appointment in appointments:
                 appointment_list.append({
-                    'id': appointment.id,
+                    'id': str(appointment.id),  # Convert UUID to string
                     'service': {
                         'id': appointment.service.id,
                         'name': appointment.service.name,
@@ -1320,6 +2002,9 @@ class ConsumerAppointmentListAPI(APIView):
                 'error': 'Consumer not found'
             }, http_status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            import traceback
+            print(f"Error in ConsumerAppointmentListAPI: {str(e)}")
+            traceback.print_exc()
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -1356,6 +2041,216 @@ class ProviderServiceListAPI(APIView):
             return Response(service_list)
         except Exception as e:
             print(f"Error in ProviderServiceListAPI: {str(e)}")
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ProximityDiscountConfigAPI(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get the discount configuration for the authenticated provider
+        """
+        try:
+            # Check if user is a provider
+            if request.user.user_type != 'provider':
+                return Response({
+                    'error': 'Only providers can access discount configurations'
+                }, http_status.HTTP_403_FORBIDDEN)
+            
+            # Get provider profile
+            try:
+                provider = request.user.provider_profile
+            except:
+                return Response({
+                    'error': 'Provider profile not found'
+                }, http_status.HTTP_404_NOT_FOUND)
+            
+            # Get or create discount configuration
+            from .models import ProximityDiscountConfig
+            config, created = ProximityDiscountConfig.objects.get_or_create(provider=provider)
+            
+            # Convert config to dictionary for response
+            config_data = {
+                'id': config.id,
+                'is_active': config.is_active,
+                'tier_distances': {
+                    'tier1': {
+                        'max': config.tier1_distance
+                    },
+                    'tier2': {
+                        'min': config.tier2_min_distance,
+                        'max': config.tier2_max_distance
+                    },
+                    'tier3': {
+                        'min': config.tier3_min_distance,
+                        'max': config.tier3_max_distance
+                    },
+                    'tier4': {
+                        'min': config.tier4_min_distance,
+                        'max': config.tier4_max_distance
+                    }
+                },
+                'discounts': {
+                    'tier1': {
+                        '1appt': config.tier1_1appt_discount,
+                        '2appt': config.tier1_2appt_discount,
+                        '3appt': config.tier1_3appt_discount,
+                        '4appt': config.tier1_4appt_discount,
+                        '5appt': config.tier1_5appt_discount
+                    },
+                    'tier2': {
+                        '1appt': config.tier2_1appt_discount,
+                        '2appt': config.tier2_2appt_discount,
+                        '3appt': config.tier2_3appt_discount,
+                        '4appt': config.tier2_4appt_discount,
+                        '5appt': config.tier2_5appt_discount
+                    },
+                    'tier3': {
+                        '1appt': config.tier3_1appt_discount,
+                        '2appt': config.tier3_2appt_discount,
+                        '3appt': config.tier3_3appt_discount,
+                        '4appt': config.tier3_4appt_discount,
+                        '5appt': config.tier3_5appt_discount
+                    },
+                    'tier4': {
+                        '1appt': config.tier4_1appt_discount,
+                        '2appt': config.tier4_2appt_discount,
+                        '3appt': config.tier4_3appt_discount,
+                        '4appt': config.tier4_4appt_discount,
+                        '5appt': config.tier4_5appt_discount
+                    }
+                }
+            }
+            
+            return Response(config_data)
+        except Exception as e:
+            print(f"Error in ProximityDiscountConfigAPI (GET): {str(e)}")
+            return Response({
+                'error': str(e)
+            }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def put(self, request):
+        """
+        Update the discount configuration for the authenticated provider
+        """
+        try:
+            # Check if user is a provider
+            if request.user.user_type != 'provider':
+                return Response({
+                    'error': 'Only providers can update discount configurations'
+                }, http_status.HTTP_403_FORBIDDEN)
+            
+            # Get provider profile
+            try:
+                provider = request.user.provider_profile
+            except:
+                return Response({
+                    'error': 'Provider profile not found'
+                }, http_status.HTTP_404_NOT_FOUND)
+            
+            # Get or create discount configuration
+            from .models import ProximityDiscountConfig
+            config, created = ProximityDiscountConfig.objects.get_or_create(provider=provider)
+            
+            # Update is_active flag if provided
+            is_active = request.data.get('is_active')
+            if is_active is not None:
+                config.is_active = is_active
+            
+            # Update tier distances if provided
+            tier_distances = request.data.get('tier_distances', {})
+            
+            # Tier 1
+            tier1 = tier_distances.get('tier1', {})
+            if 'max' in tier1:
+                config.tier1_distance = tier1['max']
+            
+            # Tier 2
+            tier2 = tier_distances.get('tier2', {})
+            if 'min' in tier2:
+                config.tier2_min_distance = tier2['min']
+            if 'max' in tier2:
+                config.tier2_max_distance = tier2['max']
+            
+            # Tier 3
+            tier3 = tier_distances.get('tier3', {})
+            if 'min' in tier3:
+                config.tier3_min_distance = tier3['min']
+            if 'max' in tier3:
+                config.tier3_max_distance = tier3['max']
+            
+            # Tier 4
+            tier4 = tier_distances.get('tier4', {})
+            if 'min' in tier4:
+                config.tier4_min_distance = tier4['min']
+            if 'max' in tier4:
+                config.tier4_max_distance = tier4['max']
+            
+            # Update discount percentages if provided
+            discounts = request.data.get('discounts', {})
+            
+            # Tier 1 discounts
+            tier1_discounts = discounts.get('tier1', {})
+            if '1appt' in tier1_discounts:
+                config.tier1_1appt_discount = tier1_discounts['1appt']
+            if '2appt' in tier1_discounts:
+                config.tier1_2appt_discount = tier1_discounts['2appt']
+            if '3appt' in tier1_discounts:
+                config.tier1_3appt_discount = tier1_discounts['3appt']
+            if '4appt' in tier1_discounts:
+                config.tier1_4appt_discount = tier1_discounts['4appt']
+            if '5appt' in tier1_discounts:
+                config.tier1_5appt_discount = tier1_discounts['5appt']
+            
+            # Tier 2 discounts
+            tier2_discounts = discounts.get('tier2', {})
+            if '1appt' in tier2_discounts:
+                config.tier2_1appt_discount = tier2_discounts['1appt']
+            if '2appt' in tier2_discounts:
+                config.tier2_2appt_discount = tier2_discounts['2appt']
+            if '3appt' in tier2_discounts:
+                config.tier2_3appt_discount = tier2_discounts['3appt']
+            if '4appt' in tier2_discounts:
+                config.tier2_4appt_discount = tier2_discounts['4appt']
+            if '5appt' in tier2_discounts:
+                config.tier2_5appt_discount = tier2_discounts['5appt']
+            
+            # Tier 3 discounts
+            tier3_discounts = discounts.get('tier3', {})
+            if '1appt' in tier3_discounts:
+                config.tier3_1appt_discount = tier3_discounts['1appt']
+            if '2appt' in tier3_discounts:
+                config.tier3_2appt_discount = tier3_discounts['2appt']
+            if '3appt' in tier3_discounts:
+                config.tier3_3appt_discount = tier3_discounts['3appt']
+            if '4appt' in tier3_discounts:
+                config.tier3_4appt_discount = tier3_discounts['4appt']
+            if '5appt' in tier3_discounts:
+                config.tier3_5appt_discount = tier3_discounts['5appt']
+            
+            # Tier 4 discounts
+            tier4_discounts = discounts.get('tier4', {})
+            if '1appt' in tier4_discounts:
+                config.tier4_1appt_discount = tier4_discounts['1appt']
+            if '2appt' in tier4_discounts:
+                config.tier4_2appt_discount = tier4_discounts['2appt']
+            if '3appt' in tier4_discounts:
+                config.tier4_3appt_discount = tier4_discounts['3appt']
+            if '4appt' in tier4_discounts:
+                config.tier4_4appt_discount = tier4_discounts['4appt']
+            if '5appt' in tier4_discounts:
+                config.tier4_5appt_discount = tier4_discounts['5appt']
+            
+            # Save the updated configuration
+            config.save()
+            
+            # Return the updated configuration
+            return self.get(request)
+        
+        except Exception as e:
+            print(f"Error in ProximityDiscountConfigAPI (PUT): {str(e)}")
             return Response({
                 'error': str(e)
             }, http_status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -11,6 +11,7 @@ import { Container,
     InputLabel,
     Select,
     MenuItem,
+    Grid,
 } from '@mui/material';
 import { auth } from '../../services/api';
 
@@ -23,6 +24,11 @@ const Register = () => {
         user_type: 'consumer',
         phone_number: '',
         address: '',
+        street_address: '',
+        apartment: '',
+        city: '',
+        state: '',
+        zip_code: '',
     });
     const [error, setError] = useState('');
 
@@ -32,6 +38,28 @@ const Register = () => {
             ...prev,
             [name]: value,
         }));
+
+        // If address fields change, update the combined address field
+        if(['street_address', 'apartment', 'city', 'state', 'zip_code'].includes(name)) {
+            const addressComponents = [
+                formData.street_address, 
+                formData.apartment,
+                formData.city,
+                formData.state,
+                formData.zip_code
+            ];
+            
+            // Update with the new value
+            addressComponents[['street_address', 'apartment', 'city', 'state', 'zip_code'].indexOf(name)] = value;
+            
+            // Filter out empty components and join with commas
+            const newAddress = addressComponents.filter(comp => comp).join(', ');
+            
+            setFormData(prev => ({
+                ...prev,
+                address: newAddress,
+            }));
+        }
     };
 
     const handleSelectChange = (e) => {
@@ -149,16 +177,62 @@ const Register = () => {
                             onChange={handleTextChange}
                             margin="normal"
                         />
+                        
+                        <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>
+                            Address Information
+                        </Typography>
+                        
                         <TextField
                             fullWidth
-                            label="Address"
-                            name="address"
-                            multiline
-                            rows={3}
-                            value={formData.address}
+                            label="Street Address"
+                            name="street_address"
+                            value={formData.street_address}
                             onChange={handleTextChange}
                             margin="normal"
                         />
+                        
+                        <TextField
+                            fullWidth
+                            label="Apartment/Suite/Unit (optional)"
+                            name="apartment"
+                            value={formData.apartment}
+                            onChange={handleTextChange}
+                            margin="normal"
+                        />
+                        
+                        <Grid container spacing={2}>
+                            <Grid item xs={12} sm={5}>
+                                <TextField
+                                    fullWidth
+                                    label="City"
+                                    name="city"
+                                    value={formData.city}
+                                    onChange={handleTextChange}
+                                    margin="normal"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                                <TextField
+                                    fullWidth
+                                    label="State"
+                                    name="state"
+                                    value={formData.state}
+                                    onChange={handleTextChange}
+                                    margin="normal"
+                                />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                                <TextField
+                                    fullWidth
+                                    label="ZIP Code"
+                                    name="zip_code"
+                                    value={formData.zip_code}
+                                    onChange={handleTextChange}
+                                    margin="normal"
+                                />
+                            </Grid>
+                        </Grid>
+                        
                         <Button
                             fullWidth
                             type="submit"

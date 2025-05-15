@@ -6,6 +6,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import Layout from './components/common/Layout';
 import Login from './components/auth/Login';
 import Register from './components/auth/Register';
+import ConsumerProfile from './components/auth/ConsumerProfile';
 import ServiceList from './components/services/ServiceList';
 import ServiceBrowser from './components/services/ServiceBrowser';
 import ProviderDashboard from './components/provider/ProviderDashboard';
@@ -118,6 +119,14 @@ const App = () => {
                                 path="/services/list"
                                 element={
                                     <ServiceList />
+                                }
+                            />
+                            <Route
+                                path="/profile"
+                                element={
+                                    <ProtectedRoute userType="consumer">
+                                        <ConsumerProfile />
+                                    </ProtectedRoute>
                                 }
                             />
                             <Route

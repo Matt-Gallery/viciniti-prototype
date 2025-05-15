@@ -1,7 +1,6 @@
-import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef } from 'react';
 import { Box, 
     Typography, 
-    Paper, 
     Button, 
     Dialog,
     DialogTitle,
@@ -11,18 +10,31 @@ import { Box,
     TextField,
     CircularProgress,
     Alert,
-    IconButton,
     Chip,
-    Divider,
-    Tooltip,
+    IconButton,
+    Tooltip
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format, addDays, areIntervalsOverlapping } from 'date-fns';
 import AddIcon from '@mui/icons-material/Add';
-import DeleteIcon from '@mui/icons-material/Delete';
 import { availability as availabilityApi, appointments as appointmentsApi } from '../../services/api';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+
+// Add a utility function to check if a time range overlaps with a given hour
+const isTimeRangeOverlappingHour = (start, end, day, hour) => {
+    const hourStart = new Date(day);
+    hourStart.setHours(hour, 0, 0);
+    const hourEnd = new Date(day);
+    hourEnd.setHours(hour + 1, 0, 0);
+    
+    return areIntervalsOverlapping(
+        { start, end },
+        { start: hourStart, end: hourEnd }
+    );
+};
 
 const AppointmentCalendar = forwardRef(({ mode,
     onBlockClick,
@@ -57,13 +69,76 @@ const AppointmentCalendar = forwardRef(({ mode,
     const [endTime, setEndTime] = useState(null);
     const [timeError, setTimeError] = useState('');
     
+    // Add state for block editing
+    const [editingBlock, setEditingBlock] = useState(null);
+    const [editDialogOpen, setEditDialogOpen] = useState(false);
+    
+    // Add state for block deletion
+    const [deletingBlock, setDeletingBlock] = useState(null);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+    
     const WORKING_HOURS_START = 8; // 8 AM
     const WORKING_HOURS_END = 20;  // 8 PM
     const HOUR_HEIGHT = 70;        // Increased from 50 to 70 pixels per hour
     
     const [providerAppointments, setProviderAppointments] = useState([]);
+    
+    // Add new state variables for drag functionality
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStartTime, setDragStartTime] = useState(null);
+    const [dragCurrentTime, setDragCurrentTime] = useState(null);
+    const [dragDay, setDragDay] = useState(null);
+    
+    // Add refs to access DOM elements for drag calculations
+    const dayColumnsRef = useRef({});
+    
+    // Add ref to scrollable container
+    const scrollContainerRef = useRef(null);
+    
+    // Add state for auto-scrolling
+    const [autoScrolling, setAutoScrolling] = useState(false);
+    const scrollAnimationRef = useRef(null);
+    // Added to smooth out drag operations
+    const dragThrottleRef = useRef(false);
+    
+    const fetchUserAppointments = async () => {
+        try {
+            const userStr = localStorage.getItem('user');
+            if (!userStr) {
+                console.log('No user logged in, skipping appointment fetch');
+                return [];
+            }
 
-    // Define fetch functions before useEffect
+            console.log('Fetching user appointments');
+            const result = await appointmentsApi.getAll();
+            
+            console.log('User appointments loaded:', result.data.length, 'appointments');
+            if (result.data && result.data.length > 0) {
+                console.log('First appointment:', result.data[0]);
+            }
+            
+            // Update state, but only if data actually changed
+            if (Array.isArray(result.data)) {
+                // Check if the appointments have actually changed to avoid unnecessary rerenders
+                const existingIds = new Set(userAppointments.map(a => a.id));
+                const newAppointments = result.data;
+                
+                // Check if any appointments were added or removed
+                const hasChanges = newAppointments.length !== userAppointments.length || 
+                    newAppointments.some(newAppt => !existingIds.has(newAppt.id));
+                
+                if (hasChanges) {
+                    setUserAppointments(newAppointments);
+                }
+            }
+            
+            return result.data;
+        } catch (err) {
+            console.error('Error fetching user appointments:', err);
+            return [];
+        }
+    };
+    
     const fetchProviderAvailability = async (provId) => {
         try {
             setLoading(true);
@@ -78,10 +153,10 @@ const AppointmentCalendar = forwardRef(({ mode,
                         id: block.id,
                         start: new Date(block.start),
                         end: new Date(block.end)
-                    }));
+                     }));
                 } else {
                     formattedAvailability[dateStr] = [];
-                }
+                 }
             });
             
             // Merge with initial availability to ensure all days have entries
@@ -90,14 +165,14 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Add all the loaded availability to the merged object
             Object.entries(formattedAvailability).forEach(([dateStr, blocks]) => {
                 mergedAvailability[dateStr] = blocks;
-            });
+             });
             
             // Ensure all days in our view have entries (even if empty)
             days.forEach(day => {
                 const dateStr = format(day, 'yyyy-MM-dd');
                 if (!mergedAvailability[dateStr]) {
                     mergedAvailability[dateStr] = [];
-                }
+                 }
             });
             
             setTimeBlocks(mergedAvailability);
@@ -106,60 +181,68 @@ const AppointmentCalendar = forwardRef(({ mode,
             console.error('Error fetching availability');
             setError('Failed to load availability data');
             setLoading(false);
-        }
+         }
     };
     
     const fetchServiceAvailability = async (servId) => {
         try {
             setLoading(true);
-            console.log('Fetching availability for service ID');
-            const response = await availabilityApi.getForService(servId);
+            console.log('Fetching availability for service ID:', servId);
+            
+            // Use the discount-enabled endpoint when in consumer mode
+            const response = mode === 'consumer' 
+                ? await availabilityApi.getForServiceWithDiscount(servId)
+                : await availabilityApi.getForService(servId);
+            
+            console.log('API Response received:', response.data);
+                
+            // Debug logging to see what's in the data
+            Object.keys(response.data).forEach(date => {
+                console.log(`Available slots for ${date}: ${response.data[date].length}`);
+            });
             
             // Convert ISO strings to Date objects
             const formattedAvailability = {};
             Object.entries(response.data).forEach(([dateStr, blocks]) => {
                 if (Array.isArray(blocks)) {
-                    formattedAvailability[dateStr] = blocks.map((block) => ({
-                        id: block.id,
-                        start: new Date(block.start),
-                        end: new Date(block.end)
-                    }));
+                    formattedAvailability[dateStr] = blocks.map((block, index) => {
+                        console.log(`Processing block ${index} for ${dateStr}:`, block);
+                        return {
+                            // Ensure each block has a truly unique ID by incorporating both date and index
+                            id: `${dateStr}-${block.id}-${index}`,
+                            start: new Date(block.start),
+                            end: new Date(block.end),
+                            // Add discount information if available
+                            originalPrice: block.original_price,
+                            discountPercentage: block.discount_percentage || 0,
+                            discountedPrice: block.discounted_price || block.original_price
+                        };
+                    });
                 } else {
                     formattedAvailability[dateStr] = [];
                 }
             });
             
-            console.log('Service availability loaded');
+            console.log('Formatted availability:', formattedAvailability);
+            
+            // Debug logging to check availability by date
+            Object.keys(formattedAvailability).forEach(date => {
+                console.log(`Formatted slots for ${date}: ${formattedAvailability[date].length}`);
+                if (formattedAvailability[date].length > 0) {
+                    console.log('First slot:', formattedAvailability[date][0]);
+                }
+            });
+            
+            console.log('Service availability loaded - setting timeBlocks state');
             setTimeBlocks(formattedAvailability);
             setLoading(false);
         } catch (err) {
-            console.error('Error fetching service availability');
+            console.error('Error fetching service availability:', err);
             setError('Failed to load appointment options');
             setLoading(false);
         }
     };
-
-    const fetchUserAppointments = async () => {
-        try {
-            const userStr = localStorage.getItem('user');
-            if (!userStr) {
-                console.log('No user logged in, skipping appointment fetch');
-                return;
-            }
-
-            console.log('Fetching user appointments');
-            const result = await appointmentsApi.getAll();
-            
-            console.log('User appointments loaded');
-            setUserAppointments(result.data);
-            return result.data;
-        } catch (err) {
-            console.error('Error fetching user appointments');
-            // Don't set error - this is supplementary data
-            return [];
-        }
-    };
-
+    
     const fetchProviderAppointments = async () => {
         if (mode !== 'provider' || !providerId) return;
         
@@ -179,19 +262,21 @@ const AppointmentCalendar = forwardRef(({ mode,
     useImperativeHandle(ref, () => ({
         fetchUserAppointments: async () => {
             console.log('Refreshing appointments and availability');
-            // Refresh user appointments first
-            const appointments = await fetchUserAppointments();
-            console.log('Appointments refreshed:', appointments);
             
-            // Also refresh service availability if in consumer mode
+            // First refresh service availability to update available slots
             if (mode === 'consumer' && serviceId) {
                 console.log('Refreshing service availability for service:', serviceId);
                 await fetchServiceAvailability(serviceId);
             }
             
+            // Then refresh appointments
+            const appointments = await fetchUserAppointments();
+            console.log('Appointments refreshed:', appointments?.length || 0);
+            
+            // Return the fetched appointments
             return appointments;
         }
-    }));
+    }), [fetchUserAppointments, fetchServiceAvailability, mode, serviceId]); // Added missing dependencies
     
     // Generate days array (today + next N days)
     useEffect(() => {
@@ -199,6 +284,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         for (let i = 0; i < daysToShow; i++) {
             newDays.push(addDays(new Date(), i));
         }
+        console.log('Calendar days to display:', newDays.map(day => format(day, 'yyyy-MM-dd')));
         setDays(newDays);
         
         // Initialize empty availability for each day
@@ -208,7 +294,14 @@ const AppointmentCalendar = forwardRef(({ mode,
             initialAvailability[dateStr] = [];
         });
         
-        setTimeBlocks(initialTimeBlocks || initialAvailability);
+        if (initialTimeBlocks) {
+            console.log('Initializing calendar with provided time blocks:', initialTimeBlocks);
+            // Merge the initial time blocks with empty slots for days that don't have any blocks
+            const mergedBlocks = { ...initialAvailability, ...initialTimeBlocks };
+            setTimeBlocks(mergedBlocks);
+        } else {
+            setTimeBlocks(initialAvailability);
+        }
         
         // Load data based on mode
         if (mode === 'provider' && providerId) {
@@ -218,13 +311,54 @@ const AppointmentCalendar = forwardRef(({ mode,
             fetchServiceAvailability(serviceId);
             fetchUserAppointments(); // Fetch user's existing appointments
         }
-    }, [mode, providerId, serviceId, daysToShow, initialTimeBlocks]);
+    }, [mode, providerId, serviceId, daysToShow, initialTimeBlocks]); // eslint-disable-line react-hooks/exhaustive-deps
+    
+    // Update timeBlocks when initialTimeBlocks prop changes
+    useEffect(() => {
+        console.log('AppointmentCalendar initialTimeBlocks changed:', initialTimeBlocks);
+        
+        if (initialTimeBlocks && Object.keys(initialTimeBlocks).length > 0) {
+            console.log('Setting timeBlocks from initialTimeBlocks');
+            
+            // Deep check if the timeBlocks have actually changed to avoid unnecessary re-renders
+            let hasChanged = false;
+            for (const date in initialTimeBlocks) {
+                if (!timeBlocks[date] || 
+                    timeBlocks[date].length !== initialTimeBlocks[date].length) {
+                    hasChanged = true;
+                    break;
+                }
+            }
+            
+            if (hasChanged) {
+                // Create a deep copy with properly instantiated Date objects
+                const formattedBlocks = {};
+                Object.entries(initialTimeBlocks).forEach(([dateStr, blocks]) => {
+                    if (Array.isArray(blocks)) {
+                        formattedBlocks[dateStr] = blocks.map(block => ({
+                            id: block.id,
+                            start: block.start instanceof Date ? new Date(block.start) : new Date(block.start),
+                            end: block.end instanceof Date ? new Date(block.end) : new Date(block.end),
+                            originalPrice: block.originalPrice,
+                            discountPercentage: block.discountPercentage || 0,
+                            discountedPrice: block.discountedPrice || block.originalPrice
+                        }));
+                    } else {
+                        formattedBlocks[dateStr] = [];
+                    }
+                });
+                
+                console.log('Setting formatted timeBlocks:', formattedBlocks);
+                setTimeBlocks(formattedBlocks);
+            }
+        }
+    }, [initialTimeBlocks]);
     
     const saveAvailability = async () => {
         if (mode !== 'provider' || !providerId) {
             console.error('Cannot save availability in provider mode or providerId is missing');
             return;
-        }
+         }
         
         try {
             setLoading(true);
@@ -238,12 +372,12 @@ const AppointmentCalendar = forwardRef(({ mode,
                         id: block.id,
                         start: block.start.toISOString(),
                         end: block.end.toISOString()
-                    }));
+                     }));
                 }
             });
             
             console.log('Sending API availability data');
-            const response = await availabilityApi.save(providerId, apiAvailability);
+            await availabilityApi.save(providerId, apiAvailability);
             console.log('API response from saving availability');
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
@@ -252,7 +386,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             console.error('Error saving availability');
             setError('Failed to save availability data');
             setLoading(false);
-        }
+         }
     };
     
     const handleDaySelect = (day) => {
@@ -263,7 +397,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         setStartTime(null);
         setEndTime(null);
         setTimeError('');
-    };
+     };
     
     const handleAddBlock = (day) => {
         if (mode !== 'provider') return;
@@ -273,11 +407,11 @@ const AppointmentCalendar = forwardRef(({ mode,
         setEndTime(null);
         setTimeError('');
         setDialogOpen(true);
-    };
+     };
     
     const handleCloseDialog = () => {
         setDialogOpen(false);
-    };
+     };
     
     const handleSaveTimeBlock = () => {
         if (mode !== 'provider') {
@@ -332,7 +466,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (hasOverlap) {
             setTimeError('Time block overlaps with existing availability');
             return;
-        }
+         }
         
         const updatedBlocks = [...existingBlocks, newBlock].sort((a, b) => 
             a.start.getTime() - b.start.getTime()
@@ -340,7 +474,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         
         const newAvailability = { ...timeBlocks,
             [dateStr]: updatedBlocks
-        };
+         };
         
         console.log('Updated availability with new block');
         setTimeBlocks(newAvailability);
@@ -352,7 +486,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             onAvailabilityChange(newAvailability);
         } else {
             console.warn('No onAvailabilityChange callback provided');
-        }
+         }
     };
     
     const handleDeleteBlock = (day, blockId) => {
@@ -365,21 +499,21 @@ const AppointmentCalendar = forwardRef(({ mode,
         const newAvailability = {
             ...timeBlocks,
             [dateStr]: updatedBlocks
-        };
+         };
         
         setTimeBlocks(newAvailability);
         
         // Notify parent component if callback provided
         if (onAvailabilityChange) {
             onAvailabilityChange(newAvailability);
-        }
+         }
     };
     
     const handleBlockClick = (block) => {
         if (mode === 'consumer' && onBlockClick) {
             console.log('Block clicked for booking');
             onBlockClick(block);
-        }
+         }
     };
     
     // Generate time slots for display
@@ -387,7 +521,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         const slots = [];
         for (let hour = WORKING_HOURS_START; hour < WORKING_HOURS_END; hour++) {
             slots.push(hour);
-        }
+         }
         return slots;
     };
     
@@ -397,12 +531,24 @@ const AppointmentCalendar = forwardRef(({ mode,
     const getBlocksForDay = (day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
         return timeBlocks[dateStr] || [];
-    };
+     };
 
-    // Get existing user appointments for a specific day
+    // Get existing user appointments for a specific day - combine both prop appointments and userAppointments
     const getAppointmentsForDay = (day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
-        return appointments.filter(appointment => {
+        // Create a combined array without duplicates
+        const allAppointments = [...appointments];
+        
+        // Add user appointments that aren't already included
+        const appointmentIds = new Set(appointments.map(a => a.id));
+        userAppointments.forEach(userAppt => {
+            if (!appointmentIds.has(userAppt.id)) {
+                allAppointments.push(userAppt);
+            }
+        });
+        
+        // Filter for the current day
+        return allAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
         });
@@ -416,13 +562,42 @@ const AppointmentCalendar = forwardRef(({ mode,
         return providerAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
-        });
+         });
+    };
+    
+    // Handle mouse leave event
+    const handleMouseLeave = () => {
+        if (isDragging) {
+            setIsDragging(false);
+            setDragStartTime(null);
+            setDragCurrentTime(null);
+            setDragDay(null);
+            
+            // Cancel any ongoing auto-scroll
+            if (scrollAnimationRef.current) {
+                cancelAnimationFrame(scrollAnimationRef.current);
+                setAutoScrolling(false);
+            }
+        }
     };
     
     // Calculate position and height for a time block
     const getBlockStyle = (block, isUserAppointment = false, appointment) => {
-        const startMinutes = block.start.getHours() * 60 + block.start.getMinutes();
-        const endMinutes = block.end.getHours() * 60 + block.end.getMinutes();
+        // Determine if we're dealing with an appointment object or a block
+        let startDate, endDate;
+        
+        if (appointment) {
+            // For appointments, use start_time and end_time
+            startDate = new Date(appointment.start_time);
+            endDate = new Date(appointment.end_time);
+        } else {
+            // For regular blocks, use start and end
+            startDate = block.start instanceof Date ? block.start : new Date(block.start);
+            endDate = block.end instanceof Date ? block.end : new Date(block.end);
+        }
+        
+        const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
+        const endMinutes = endDate.getHours() * 60 + endDate.getMinutes();
         
         const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
         const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
@@ -504,18 +679,27 @@ const AppointmentCalendar = forwardRef(({ mode,
                 }
             };
         } else {
+            // For provider mode (availability blocks)
+            const hasDiscount = block.discountPercentage > 0;
             return {
                 ...commonStyles,
-                backgroundColor: '#bbdefb',
+                backgroundColor: hasDiscount ? '#e8f5e9' : '#e3f2fd',  // Light green BG for discounted slots
+                border: `1px solid ${hasDiscount ? '#a5d6a7' : '#90caf9'}`,
                 '&:hover': {
-                    backgroundColor: '#90caf9',
+                    backgroundColor: hasDiscount ? '#c8e6c9' : '#bbdefb',
+                    borderColor: hasDiscount ? '#81c784' : '#1976d2',
+                },
+                // In provider mode, show edit/delete buttons on hover
+                '&:hover .block-actions': {
+                    display: mode === 'provider' ? 'flex' : 'none',
                 }
             };
         }
     };
-    
+
     // Handle provider appointment click
     const handleProviderAppointmentClick = (appointment) => {
+        console.log('Provider clicked on appointment:', appointment);
         if (mode === 'provider') {
             setSelectedAppointment(appointment);
             setCancelError('');
@@ -523,7 +707,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             setAppointmentDetailsOpen(true);
         }
     };
-    
+
     // Handle appointment click to show details
     const handleAppointmentClick = (appointment) => {
         if (mode === 'consumer') {
@@ -533,7 +717,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             setAppointmentDetailsOpen(true);
         }
     };
-    
+
     // Handle cancellation of appointment
     const handleCancelAppointment = async () => {
         if (!selectedAppointment) return;
@@ -542,10 +726,12 @@ const AppointmentCalendar = forwardRef(({ mode,
             setCancelInProgress(true);
             setCancelError('');
             
-            console.log('Cancelling appointment');
+            // Make sure the appointment ID is a string for the API call
+            const appointmentId = selectedAppointment.id.toString();
+            console.log('Cancelling appointment with ID:', appointmentId);
             
             // Call API to update appointment status
-            await appointmentsApi.updateStatus(selectedAppointment.id, 'cancelled');
+            await appointmentsApi.updateStatus(appointmentId, 'cancelled');
             console.log('Appointment cancelled successfully');
             
             setCancelSuccess(true);
@@ -566,12 +752,12 @@ const AppointmentCalendar = forwardRef(({ mode,
             }, 2000);
             
         } catch (err) {
-            console.error('Error cancelling appointment');
+            console.error('Error cancelling appointment:', err);
             setCancelError('Failed to cancel appointment. Please try again.');
             setCancelInProgress(false);
         }
     };
-    
+
     // Handle status change for provider appointments
     const handleStatusChange = async (newStatus) => {
         if (!selectedAppointment) return;
@@ -580,10 +766,12 @@ const AppointmentCalendar = forwardRef(({ mode,
             setCancelInProgress(true);
             setCancelError('');
             
-            console.log(`Updating appointment ${selectedAppointment.id} status to ${newStatus}`);
+            // Ensure ID is treated as a string
+            const appointmentId = selectedAppointment.id.toString();
+            console.log(`Updating appointment ${appointmentId} status to ${newStatus}`);
             
             // Call API to update appointment status
-            await appointmentsApi.updateStatus(selectedAppointment.id, newStatus);
+            await appointmentsApi.updateStatus(appointmentId, newStatus);
             console.log('Appointment status updated successfully');
             
             setCancelSuccess(true);
@@ -592,6 +780,12 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Refresh provider appointments
             await fetchProviderAppointments();
             
+            // If the appointment was marked as cancelled, refresh availability to show the slot as available again
+            if (newStatus === 'cancelled' && providerId) {
+                console.log('Refreshing provider availability after cancellation');
+                await fetchProviderAvailability(providerId);
+            }
+            
             // Close modal after short delay
             setTimeout(() => {
                 setAppointmentDetailsOpen(false);
@@ -599,10 +793,163 @@ const AppointmentCalendar = forwardRef(({ mode,
             }, 2000);
             
         } catch (err) {
-            console.error('Error updating appointment status');
+            console.error('Error updating appointment status:', err);
             setCancelError(`Failed to update appointment status to ${newStatus}. Please try again.`);
             setCancelInProgress(false);
         }
+    };
+
+    // Calculate minutes from Y position in the grid
+    const getTimeFromYPosition = (y, dayElement) => {
+        const rect = dayElement.getBoundingClientRect();
+        const relativeY = y - rect.top;
+        const minutesFromStart = (relativeY / HOUR_HEIGHT) * 60;
+        const hours = Math.floor(minutesFromStart / 60) + WORKING_HOURS_START;
+        const minutes = Math.round((minutesFromStart % 60) / 5) * 5; // Round to nearest 5 minutes
+        
+        return new Date(
+            new Date().getFullYear(),
+            new Date().getMonth(),
+            new Date().getDate(),
+            hours,
+            minutes
+        );
+    };
+
+    // Calculate block for the current drag operation
+    const getDragBlock = () => {
+        if (!dragStartTime || !dragCurrentTime || !dragDay) return null;
+        
+        let startTime = dragStartTime;
+        let endTime = dragCurrentTime;
+        
+        // Ensure start time is before end time
+        if (startTime > endTime) {
+            [startTime, endTime] = [endTime, startTime];
+        }
+        
+        // Ensure block has a minimum duration (15 minutes)
+        const minDuration = 15 * 60 * 1000; // 15 minutes in milliseconds
+        if (endTime - startTime < minDuration) {
+            endTime = new Date(startTime.getTime() + minDuration);
+        }
+        
+        return {
+            id: `temp-block-${Date.now()}`,
+            start: startTime,
+            end: endTime
+        };
+    };
+
+    // Handle mouse down event on day column to start drag
+    const handleMouseDown = (e, day) => {
+        if (mode !== 'provider') return;
+        
+        // Prevent default to avoid text selection during drag
+        e.preventDefault();
+        
+        // Make sure we clicked in the grid area, not on existing blocks
+        if (e.target && e.target.closest('.availability-block, .appointment-block')) {
+            return;
+        }
+        
+        const dayElement = dayColumnsRef.current[format(day, 'yyyy-MM-dd')];
+        if (!dayElement) return;
+        
+        const startTime = getTimeFromYPosition(e.clientY, dayElement);
+        
+        setIsDragging(true);
+        setDragStartTime(startTime);
+        setDragCurrentTime(startTime);
+        setDragDay(day);
+        
+        console.log('Started dragging at:', startTime);
+    };
+
+    // Auto-scroll function
+    const autoScroll = (mouseY) => {
+        if (!scrollContainerRef.current || !isDragging) {
+            setAutoScrolling(false);
+            scrollAnimationRef.current = null;
+            return;
+        }
+        
+        const scrollContainer = scrollContainerRef.current;
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const scrollThreshold = 60;
+        const scrollStep = 8; // Slightly increased to make scrolling more noticeable
+        
+        let scrollDirection = 0;
+        
+        // Calculate scroll direction based on mouse position
+        if (mouseY < containerRect.top + scrollThreshold) {
+            // Near top edge - scroll up
+            scrollDirection = -scrollStep;
+        } else if (mouseY > containerRect.bottom - scrollThreshold) {
+            // Near bottom edge - scroll down
+            scrollDirection = scrollStep;
+        }
+        
+        if (scrollDirection !== 0) {
+            // Apply the scroll
+            scrollContainer.scrollTop += scrollDirection;
+            
+            // Update drag current time based on new scroll position
+            if (dragDay) {
+                const dayElement = dayColumnsRef.current[format(dragDay, 'yyyy-MM-dd')];
+                if (dayElement) {
+                    const newY = (mouseY < containerRect.top + scrollThreshold) ? 
+                        containerRect.top + 10 : containerRect.bottom - 10;
+                    const newTime = getTimeFromYPosition(newY, dayElement);
+                    setDragCurrentTime(newTime);
+                }
+            }
+            
+            // Continue the animation
+            scrollAnimationRef.current = requestAnimationFrame(() => autoScroll(mouseY));
+        } else {
+            setAutoScrolling(false);
+            scrollAnimationRef.current = null;
+        }
+    };
+
+    // Render the time blocks during dragging operation
+    const renderDragIndicator = (day) => {
+        if (!isDragging || !dragDay) return null;
+        
+        // Only render in the correct day column
+        if (format(day, 'yyyy-MM-dd') !== format(dragDay, 'yyyy-MM-dd')) return null;
+        
+        const dragBlock = getDragBlock();
+        if (!dragBlock) return null;
+        
+        const startMinutes = dragBlock.start.getHours() * 60 + dragBlock.start.getMinutes();
+        const endMinutes = dragBlock.end.getHours() * 60 + dragBlock.end.getMinutes();
+        
+        const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
+        const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
+        
+        return (
+            <Box
+                key="drag-block"
+                sx={{
+                    position: 'absolute',
+                    top: `${top}px`,
+                    height: `${height}px`,
+                    left: 0,
+                    right: 0,
+                    backgroundColor: 'rgba(144, 202, 249, 0.5)',
+                    border: '2px dashed #1976d2',
+                    borderRadius: '4px',
+                    zIndex: 5,
+                    pointerEvents: 'none' // Make sure the drag block doesn't interfere with mouse events
+                }}
+            >
+                <Typography variant="caption" sx={{ fontSize: '0.7rem', p: 1 }}>
+                    {format(dragBlock.start, 'h:mm a')} - {format(dragBlock.end, 'h:mm a')}
+                </Typography>
+            </Box>
+        );
     };
     
     // Update the block rendering to include appointments
@@ -610,6 +957,17 @@ const AppointmentCalendar = forwardRef(({ mode,
         const dateStr = format(day, 'yyyy-MM-dd');
         const blocks = timeBlocks[dateStr] || [];
         const dayAppointments = getAppointmentsForDay(day);
+        
+        // Debug logging
+        if (hour === 8) { // Only log once per day to avoid console spam
+            console.log(`Rendering day ${dateStr} with ${dayAppointments.length} appointments and ${blocks.length} available blocks`);
+            if (blocks.length > 0) {
+                console.log('Available blocks for this day:', blocks);
+            }
+            if (dayAppointments.length > 0) {
+                console.log('Appointments for this day:', dayAppointments);
+            }
+        }
 
         // Find if there's an appointment at this hour
         const appointment = dayAppointments.find(apt => {
@@ -619,16 +977,21 @@ const AppointmentCalendar = forwardRef(({ mode,
             blockStart.setHours(hour, 0, 0);
             const blockEnd = new Date(day);
             blockEnd.setHours(hour + 1, 0, 0);
-            return areIntervalsOverlapping(
+            const overlaps = areIntervalsOverlapping(
                 { start: aptStart, end: aptEnd },
                 { start: blockStart, end: blockEnd }
             );
+            if (overlaps && hour === 8) { // Only log for hour 8 to prevent spam
+                console.log(`Found appointment that overlaps with hour ${hour}:`, apt);
+            }
+            return overlaps;
         });
 
         // Find if there's an availability block at this hour
         const block = blocks.find(block => {
-            const blockStart = new Date(block.start);
-            const blockEnd = new Date(block.end);
+            // Ensure we have valid Date objects for comparison
+            const blockStart = block.start instanceof Date ? block.start : new Date(block.start);
+            const blockEnd = block.end instanceof Date ? block.end : new Date(block.end);
             const hourStart = new Date(day);
             hourStart.setHours(hour, 0, 0);
             const hourEnd = new Date(day);
@@ -642,46 +1005,19 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (appointment) {
             const startTime = new Date(appointment.start_time);
             const endTime = new Date(appointment.end_time);
-            const startMinutes = startTime.getHours() * 60 + startTime.getMinutes();
-            const endMinutes = endTime.getHours() * 60 + endTime.getMinutes();
             
-            const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
-            const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
-
             return (
                 <Box
-                    key={`${dateStr}-${appointment.id}`}
-                    sx={{
-                        position: 'absolute',
-                        top: `${top}px`,
-                        height: `${height}px`,
-                        left: 0,
-                        right: 0,
-                        backgroundColor: appointment.status === 'pending' ? '#fff3cd' :
-                            appointment.status === 'confirmed' ? '#d4edda' :
-                            appointment.status === 'cancelled' ? '#f8d7da' :
-                            appointment.status === 'completed' ? '#cce5ff' : '#e3f2fd',
-                        border: '1px solid',
-                        borderColor: appointment.status === 'pending' ? '#ffeeba' :
-                            appointment.status === 'confirmed' ? '#c3e6cb' :
-                            appointment.status === 'cancelled' ? '#f5c6cb' :
-                            appointment.status === 'completed' ? '#b8daff' : '#90caf9',
-                        borderRadius: '4px',
-                        padding: '2px 4px',
-                        fontSize: '0.75rem',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        cursor: 'pointer',
-                        zIndex: 2,
-                        '&:hover': {
-                            backgroundColor: appointment.status === 'pending' ? '#ffeeba' :
-                                appointment.status === 'confirmed' ? '#c3e6cb' :
-                                appointment.status === 'cancelled' ? '#f5c6cb' :
-                                appointment.status === 'completed' ? '#b8daff' : '#90caf9',
+                    key={`appointment-${dateStr}-${appointment.id}-${hour}`}
+                    className="appointment-block"
+                    sx={getBlockStyle({}, false, appointment)}
+                    onClick={() => {
+                        if (mode === 'provider') {
+                            handleProviderAppointmentClick(appointment);
+                        } else {
+                            handleAppointmentClick(appointment);
                         }
                     }}
-                    onClick={() => handleAppointmentClick(appointment)}
                 >
                     <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
                         {format(startTime, 'h:mm a')} - {format(endTime, 'h:mm a')}
@@ -692,36 +1028,24 @@ const AppointmentCalendar = forwardRef(({ mode,
                 </Box>
             );
         } else if (block) {
-            const startMinutes = block.start.getHours() * 60 + block.start.getMinutes();
-            const endMinutes = block.end.getHours() * 60 + block.end.getMinutes();
+            // Ensure block.start and block.end are Date objects before calling getHours/getMinutes
+            const startDate = block.start instanceof Date ? block.start : new Date(block.start);
+            const endDate = block.end instanceof Date ? block.end : new Date(block.end);
+            
+            const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
+            const endMinutes = endDate.getHours() * 60 + endDate.getMinutes();
             
             const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
             const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
 
+            // Check if block has discount data
+            const hasDiscount = block.discountPercentage > 0;
+
             return (
                 <Box
-                    key={`${dateStr}-${block.id}`}
-                    sx={{
-                        position: 'absolute',
-                        top: `${top}px`,
-                        height: `${height}px`,
-                        left: 0,
-                        right: 0,
-                        backgroundColor: '#e3f2fd',
-                        border: '1px solid #90caf9',
-                        borderRadius: '4px',
-                        padding: '2px 4px',
-                        fontSize: '0.75rem',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        cursor: mode === 'provider' ? 'pointer' : 'pointer', // Changed to always be pointer
-                        zIndex: 1,
-                        '&:hover': {
-                            backgroundColor: '#bbdefb',
-                            borderColor: '#1976d2',
-                        }
-                    }}
+                    key={`block-${block.id}-${hour}`}
+                    className="availability-block"
+                    sx={getBlockStyle(block, false, null)}
                     onClick={() => {
                         if (mode === 'provider') {
                             handleBlockClick(block);
@@ -731,15 +1055,92 @@ const AppointmentCalendar = forwardRef(({ mode,
                     }}
                 >
                     <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
-                        {format(block.start, 'h:mm a')} - {format(block.end, 'h:mm a')}
+                        {format(startDate, 'h:mm a')} - {format(endDate, 'h:mm a')}
                     </Typography>
                     <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block' }}>
                         Available
                     </Typography>
+                    
+                    {/* Edit/Delete buttons for provider mode */}
+                    {mode === 'provider' && (
+                        <Box 
+                            className="block-actions"
+                            sx={{
+                                position: 'absolute',
+                                top: 2,
+                                right: 2,
+                                display: 'none',
+                                flexDirection: 'row',
+                                gap: '2px',
+                                backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                                borderRadius: '2px',
+                                zIndex: 5 // Ensure buttons are on top
+                            }}
+                        >
+                            <Tooltip title="Edit">
+                                <IconButton 
+                                    size="small" 
+                                    onClick={(e) => handleEditBlock(day, block, e)}
+                                    sx={{ padding: '2px' }}
+                                >
+                                    <EditIcon sx={{ fontSize: '0.875rem' }} />
+                                </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Delete">
+                                <IconButton 
+                                    size="small" 
+                                    onClick={(e) => handleDeleteBlockClick(day, block, e)}
+                                    sx={{ padding: '2px' }}
+                                >
+                                    <DeleteIcon sx={{ fontSize: '0.875rem' }} />
+                                </IconButton>
+                            </Tooltip>
+                        </Box>
+                    )}
+                    
                     {mode === 'consumer' && service && (
-                        <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block', color: 'primary.main' }}>
-                            ${service.price}
-                        </Typography>
+                        <>
+                            {block.discountPercentage > 0 ? (
+                                <Box sx={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: 0.5,
+                                    mt: 0.5,
+                                    flexWrap: 'nowrap'
+                                }}>
+                                    <Typography variant="caption" sx={{ 
+                                        fontSize: '0.65rem', 
+                                        color: 'text.secondary',
+                                        textDecoration: 'line-through',
+                                        flexShrink: 0
+                                    }}>
+                                        ${block.originalPrice}
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ 
+                                        fontSize: '0.65rem',
+                                        color: 'success.main',
+                                        bgcolor: 'success.light',
+                                        px: 0.5,
+                                        borderRadius: '2px',
+                                        flexShrink: 0
+                                    }}>
+                                        -{block.discountPercentage}%
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ 
+                                        fontSize: '0.7rem', 
+                                        fontWeight: 'bold',
+                                        color: 'success.main',
+                                        flexShrink: 0
+                                    }}>
+                                        ${block.discountedPrice}
+                                    </Typography>
+                                </Box>
+                            ) : (
+                                <Typography variant="caption" sx={{ fontSize: '0.7rem', display: 'block', color: 'primary.main' }}>
+                                    ${service.price}
+                                </Typography>
+                            )}
+                        </>
                     )}
                 </Box>
             );
@@ -748,13 +1149,337 @@ const AppointmentCalendar = forwardRef(({ mode,
         return null;
     };
     
+    const handleEditBlock = (day, block, event) => {
+        if (mode !== 'provider') return;
+        
+        // Stop event propagation to prevent other handlers from firing
+        if (event) {
+            event.stopPropagation();
+        }
+        
+        console.log('Editing block:', block);
+        
+        setSelectedDay(day);
+        setEditingBlock(block);
+        
+        // Set times for the edit dialog - ensure we're working with Date objects
+        const blockStart = block.start instanceof Date ? block.start : new Date(block.start);
+        const blockEnd = block.end instanceof Date ? block.end : new Date(block.end);
+        
+        setStartTime(blockStart);
+        setEndTime(blockEnd);
+        setTimeError('');
+        setEditDialogOpen(true);
+    };
+    
+    const handleCloseEditDialog = () => {
+        setEditDialogOpen(false);
+        setEditingBlock(null);
+    };
+    
+    const handleSaveEditedBlock = () => {
+        if (mode !== 'provider' || !editingBlock) {
+            return;
+        }
+        
+        if (!startTime || !endTime) {
+            setTimeError('Both start and end times are required');
+            return;
+        }
+        
+        // Create time objects using the same date for comparison
+        const startHours = startTime.getHours();
+        const startMinutes = startTime.getMinutes();
+        const endHours = endTime.getHours();
+        const endMinutes = endTime.getMinutes();
+        
+        // Check if end time is earlier than start time
+        if (endHours < startHours || (endHours === startHours && endMinutes <= startMinutes)) {
+            setTimeError('End time must be after start time');
+            return;
+        }
+        
+        console.log('Saving edited block');
+        
+        const dateStr = format(selectedDay, 'yyyy-MM-dd');
+        console.log('Date string for block:', dateStr);
+        
+        // Create updated block with same ID but new times
+        const updatedBlock = {
+            id: editingBlock.id,
+            start: new Date(
+                selectedDay.getFullYear(),
+                selectedDay.getMonth(),
+                selectedDay.getDate(),
+                startHours,
+                startMinutes
+            ),
+            end: new Date(
+                selectedDay.getFullYear(),
+                selectedDay.getMonth(),
+                selectedDay.getDate(),
+                endHours,
+                endMinutes
+            )
+        };
+        
+        console.log('Updated block:', updatedBlock);
+        
+        // Get existing blocks for this day and replace the one being edited
+        const existingBlocks = timeBlocks[dateStr] || [];
+        const updatedBlocks = existingBlocks.map(block => 
+            block.id === editingBlock.id ? updatedBlock : block
+        ).sort((a, b) => 
+            (a.start instanceof Date ? a.start : new Date(a.start)).getTime() - 
+            (b.start instanceof Date ? b.start : new Date(b.start)).getTime()
+        );
+        
+        const newAvailability = {
+            ...timeBlocks,
+            [dateStr]: updatedBlocks
+        };
+        
+        console.log('Updated availability with edited block:', newAvailability);
+        setTimeBlocks(newAvailability);
+        setEditDialogOpen(false);
+        setEditingBlock(null);
+        
+        // Notify parent component if callback provided
+        if (onAvailabilityChange) {
+            console.log('Notifying parent of availability change after edit');
+            onAvailabilityChange(newAvailability);
+        }
+    };
+    
+    const handleDeleteBlockClick = (day, block, event) => {
+        if (mode !== 'provider') return;
+        
+        // Stop event propagation to prevent other handlers from firing
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        
+        console.log('Deleting block:', block, 'for day:', format(day, 'yyyy-MM-dd'));
+        setSelectedDay(day);
+        setDeletingBlock(block);
+        setDeleteDialogOpen(true);
+    };
+    
+    const handleCloseDeleteDialog = () => {
+        setDeleteDialogOpen(false);
+        setDeletingBlock(null);
+    };
+    
+    const handleConfirmDeleteBlock = () => {
+        if (mode !== 'provider' || !deletingBlock) return;
+        
+        const dateStr = format(selectedDay, 'yyyy-MM-dd');
+        console.log('Confirming deletion of block for date:', dateStr, 'block ID:', deletingBlock.id);
+        
+        // Create a deep copy of the current timeBlocks state
+        const updatedTimeBlocks = { ...timeBlocks };
+        
+        // Make sure we have an array for this date
+        if (!updatedTimeBlocks[dateStr] || !Array.isArray(updatedTimeBlocks[dateStr])) {
+            console.log('No existing blocks for this date or invalid data structure');
+            setDeleteDialogOpen(false);
+            setDeletingBlock(null);
+            return;
+        }
+        
+        // Get existing blocks and filter out the one to delete
+        const existingBlocks = updatedTimeBlocks[dateStr];
+        console.log('Existing blocks before deletion:', existingBlocks.length);
+        
+        const updatedBlocks = existingBlocks.filter(block => {
+            const blocksAreDifferent = block.id !== deletingBlock.id;
+            if (!blocksAreDifferent) {
+                console.log('Found block to delete with ID:', block.id);
+            }
+            return blocksAreDifferent;
+        });
+        
+        console.log('Blocks after filtering:', updatedBlocks.length);
+        
+        // Update the timeBlocks state with the filtered array
+        updatedTimeBlocks[dateStr] = updatedBlocks;
+        
+        console.log('Setting new timeBlocks state with block deleted');
+        setTimeBlocks(updatedTimeBlocks);
+        
+        // First close the dialog and clear the deleting state
+        setDeleteDialogOpen(false);
+        setDeletingBlock(null);
+        
+        // Then notify parent component with the updated blocks
+        if (onAvailabilityChange) {
+            console.log('Notifying parent of availability change after deletion');
+            // Use the timeBlocks copy directly to ensure the right data is passed
+            onAvailabilityChange(updatedTimeBlocks);
+        }
+    };
+    
+    // Handle mouse move event to update drag block and possibly trigger auto-scroll
+    const handleMouseMove = (e) => {
+        if (!isDragging || !dragDay) return;
+        
+        // Simple throttling to prevent too many updates
+        if (dragThrottleRef.current) return;
+        dragThrottleRef.current = true;
+        
+        setTimeout(() => {
+            dragThrottleRef.current = false;
+        }, 16); // Approximately 60fps
+        
+        const dayElement = dayColumnsRef.current[format(dragDay, 'yyyy-MM-dd')];
+        if (!dayElement) return;
+        
+        const currentTime = getTimeFromYPosition(e.clientY, dayElement);
+        setDragCurrentTime(currentTime);
+        
+        // Check if we need to start auto-scrolling
+        const scrollContainer = scrollContainerRef.current;
+        if (scrollContainer) {
+            const containerRect = scrollContainer.getBoundingClientRect();
+            const mousePosY = e.clientY;
+            const scrollThreshold = 60;
+            
+            // If mouse is near the top or bottom edge
+            if (mousePosY < containerRect.top + scrollThreshold || 
+                mousePosY > containerRect.bottom - scrollThreshold) {
+                
+                if (!autoScrolling) {
+                    setAutoScrolling(true);
+                    if (scrollAnimationRef.current) {
+                        cancelAnimationFrame(scrollAnimationRef.current);
+                    }
+                    scrollAnimationRef.current = requestAnimationFrame(() => autoScroll(e.clientY));
+                }
+            } else {
+                // Stop auto-scrolling if mouse is back in safe area
+                if (autoScrolling) {
+                    setAutoScrolling(false);
+                    if (scrollAnimationRef.current) {
+                        cancelAnimationFrame(scrollAnimationRef.current);
+                        scrollAnimationRef.current = null;
+                    }
+                }
+            }
+        }
+    };
+
+    // Handle mouse up event to finalize the block
+    const handleMouseUp = () => {
+        // Cancel any ongoing auto-scroll
+        if (scrollAnimationRef.current) {
+            cancelAnimationFrame(scrollAnimationRef.current);
+            setAutoScrolling(false);
+        }
+        
+        if (!isDragging || !dragDay) {
+            setIsDragging(false);
+            setDragStartTime(null);
+            setDragCurrentTime(null);
+            setDragDay(null);
+            return;
+        }
+        
+        const dragBlock = getDragBlock();
+        if (!dragBlock) {
+            setIsDragging(false);
+            setDragStartTime(null);
+            setDragCurrentTime(null);
+            setDragDay(null);
+            return;
+        }
+        
+        // Create the new availability block
+        const dateStr = format(dragDay, 'yyyy-MM-dd');
+        const existingBlocks = timeBlocks[dateStr] || [];
+        
+        console.log(`MouseUp: Creating block for ${dateStr}`, {
+            existingBlocks: existingBlocks,
+            dragBlock: dragBlock
+        });
+        
+        // Check for overlaps with existing blocks
+        const hasOverlap = existingBlocks.some(block => 
+            areIntervalsOverlapping(
+                { start: block.start instanceof Date ? block.start : new Date(block.start), 
+                    end: block.end instanceof Date ? block.end : new Date(block.end) },
+                { start: dragBlock.start, end: dragBlock.end }
+            )
+        );
+        
+        // First, clean up the drag state
+        setIsDragging(false);
+        setDragStartTime(null);
+        setDragCurrentTime(null);
+        setDragDay(null);
+        
+        if (!hasOverlap) {
+            // Add the new block with proper date from the dragDay
+            const newBlock = {
+                id: `block-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                start: new Date(
+                    dragDay.getFullYear(),
+                    dragDay.getMonth(),
+                    dragDay.getDate(),
+                    dragBlock.start.getHours(),
+                    dragBlock.start.getMinutes()
+                ),
+                end: new Date(
+                    dragDay.getFullYear(),
+                    dragDay.getMonth(),
+                    dragDay.getDate(),
+                    dragBlock.end.getHours(),
+                    dragBlock.end.getMinutes()
+                )
+            };
+            
+            console.log('Creating new availability block:', newBlock);
+            
+            const updatedBlocks = [...existingBlocks, newBlock].sort((a, b) => 
+                (a.start instanceof Date ? a.start : new Date(a.start)).getTime() - 
+                (b.start instanceof Date ? b.start : new Date(b.start)).getTime()
+            );
+            
+            // Create a new timeBlocks object to ensure React detects the change
+            const newTimeBlocks = {
+                ...timeBlocks,
+                [dateStr]: updatedBlocks
+            };
+            
+            // Update the timeBlocks state
+            console.log('MouseUp: Setting new timeBlocks state:', newTimeBlocks);
+            setTimeBlocks(newTimeBlocks);
+            
+            // Log current state
+            setTimeout(() => {
+                console.log('After state update, timeBlocks:', timeBlocks);
+            }, 100);
+            
+            // Notify parent component
+            if (onAvailabilityChange) {
+                console.log('MouseUp: Notifying parent of availability change');
+                
+                // Use the newTimeBlocks variable directly instead of accessing state
+                // which might not have been updated yet
+                onAvailabilityChange(newTimeBlocks);
+            } else {
+                console.warn('No onAvailabilityChange callback provided, changes will not persist');
+            }
+        }
+    };
+
     if (loading && Object.keys(timeBlocks).length === 0) {
         return (
             <Box display="flex" justifyContent="center" alignItems="center" height="400px">
                 <CircularProgress />
             </Box>
         );
-    }
+     }
     
     return (
         <Box sx={{ 
@@ -766,17 +1491,18 @@ const AppointmentCalendar = forwardRef(({ mode,
             borderRadius: 1, 
             width: '100%', 
             maxWidth: '100%',
-            overflowX: 'hidden',
+            overflow: 'hidden',
             mr: 0,
+            minHeight: '580px', // Add a minimum height to ensure proper display
         }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                // Only show title if we're in provider mode or no service is provided
+                {/* Only show title if we're in provider mode or no service is provided */}
                 {(mode === 'provider' || !service) && (
                     <Typography variant="h6" sx={{ fontSize: '1rem' }}>
                         {title || (mode === 'provider' ? 'Your Availability' : '')}
                     </Typography>
                 )}
-                // Empty space div to maintain layout when title is hidden
+                {/* Empty space div to maintain layout when title is hidden */}
                 {mode === 'consumer' && service && (
                     <div></div>
                 )}
@@ -824,15 +1550,21 @@ const AppointmentCalendar = forwardRef(({ mode,
                     overflow: 'hidden',
                     width: '100%',
                     position: 'relative'
-                }}>
+                  }}>
                     { /* Scrollable area containing time labels and day columns */ }
-                    <Box sx={{ display: 'flex', 
+                    <Box 
+                      ref={scrollContainerRef}
+                      sx={{ display: 'flex', 
                         flexDirection: 'row',
                         width: '100%',
-                        height: '400px',
+                        height: '480px',
                         overflow: 'auto',
                         position: 'relative'
-                    }}>
+                      }}
+                      onMouseMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                      onMouseLeave={handleMouseLeave}
+                    >
                         { /* Time labels column - inside the scrollable area */ }
                         <Box sx={{ width: '30px', flexShrink: 0, position: 'sticky', left: 0, zIndex: 5, bgcolor: '#f5f5f5'   }}>
                             { /* Day header placeholder to align with day columns */ }
@@ -863,7 +1595,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             pr: 1,
                                             borderTop: '1px solid #ddd',
                                             bgcolor: '#f5f5f5'
-                                        }}
+                                          }}
                                     >
                                         <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', pt: 1   }}>
                                             {format(new Date().setHours(hour, 0, 0), 'h a')}
@@ -880,7 +1612,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                             position: 'relative'
                         }}>
                             {days.map((day, index) => {
-                                // Calculate flex basis to spread columns evenly
+                                const dateStr = format(day, 'yyyy-MM-dd');
                                 const flexBasis = `${100 / days.length}%`;
                                 
                                 return (
@@ -908,7 +1640,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             height: '39px',
                                             borderBottom: '2px solid rgba(255, 255, 255, 0.2)', // Add bottom border to day header
                                             boxShadow: '0 2px 4px rgba(0,0,0,0.1)' // Add subtle shadow for depth
-                                        }}>
+                                          }}>
                                             <Typography variant="subtitle2" fontWeight="bold" sx={{ fontSize: '0.8rem'   }}>
                                                 {format(day, 'EEE, MMM d')}
                                             </Typography>
@@ -930,16 +1662,21 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             )}
                                         </Box>
                                         { /* Day time grid */ }
-                                        <Box sx={{ 
-                                            position: 'relative',
-                                            height: (WORKING_HOURS_END - WORKING_HOURS_START) * HOUR_HEIGHT,
-                                            minHeight: (WORKING_HOURS_END - WORKING_HOURS_START) * HOUR_HEIGHT,
-                                            width: '100%',
-                                            flex: 1,
-                                            paddingRight: index < days.length - 1 ? '1rem' : 0, // Add padding to the right for columns with separators
-                                            zIndex: 10, // Lower z-index so content scrolls behind headers
-                                            borderRight: 'none' 
-                                        }}>
+                                        <Box 
+                                            ref={el => dayColumnsRef.current[dateStr] = el}
+                                            sx={{ 
+                                                position: 'relative',
+                                                height: (WORKING_HOURS_END - WORKING_HOURS_START) * HOUR_HEIGHT,
+                                                minHeight: (WORKING_HOURS_END - WORKING_HOURS_START) * HOUR_HEIGHT,
+                                                width: '100%',
+                                                flex: 1,
+                                                paddingRight: index < days.length - 1 ? '1rem' : 0, // Add padding to the right for columns with separators
+                                                zIndex: 10, // Lower z-index so content scrolls behind headers
+                                                borderRight: 'none',
+                                                cursor: mode === 'provider' ? 'pointer' : 'default' // Show pointer cursor in provider mode
+                                            }}
+                                            onMouseDown={(e) => handleMouseDown(e, day)}
+                                        >
                                             { /* Hour lines */ }
                                             {timeSlots.map((hour) => (
                                                 <Box 
@@ -951,11 +1688,16 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                         borderTop: '1px solid #ddd',
                                                         height: HOUR_HEIGHT,
                                                         zIndex: 1,
-                                                    }}
+                                                      }}
                                                 />
                                             ))}
                                             
-                                            { /* Time blocks for available slots */ }
+                                            {/* Render drag indicator during dragging */}
+                                            {isDragging && format(dragDay, 'yyyy-MM-dd') === format(day, 'yyyy-MM-dd') && (
+                                                renderDragIndicator(day)
+                                            )}
+                                            
+                                            {/* Time blocks for available slots */}
                                             {renderTimeBlock(day, 8)}
                                             {renderTimeBlock(day, 9)}
                                             {renderTimeBlock(day, 10)}
@@ -968,11 +1710,11 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             {renderTimeBlock(day, 17)}
                                             {renderTimeBlock(day, 18)}
                                             {renderTimeBlock(day, 19)}
-                                        </Box>
-                                    </Box>
-                                );
-                            })}
-                        </Box>
+                                                        </Box>
+                                                    </Box>
+                                                );
+                                            })}
+                                                            </Box>
                     </Box>
                 </Box>
             </Box>
@@ -1005,13 +1747,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             const newTime = new Date();
                                             newTime.setHours(Number(hours), Number(minutes));
                                             setStartTime(newTime);
-                                        }}
+                                         }}
                                         InputLabelProps={{
                                             shrink: true,
-                                        }}
+                                         }}
                                         inputProps={{
                                             step: 300, // 5 min
-                                        }}
+                                         }}
                                     />
                                 </Box>
                                 <Box sx={{ flex: 1 }}>
@@ -1025,13 +1767,13 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             const newTime = new Date();
                                             newTime.setHours(Number(hours), Number(minutes));
                                             setEndTime(newTime);
-                                        }}
+                                         }}
                                         InputLabelProps={{
                                             shrink: true,
-                                        }}
+                                         }}
                                         inputProps={{
                                             step: 300, // 5 min
-                                        }}
+                                         }}
                                     />
                                 </Box>
                             </Box>
@@ -1051,7 +1793,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                     <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                         Each appointment includes a 15-minute buffer time afterward to prevent back-to-back bookings.
                     </Typography>
-                    <Box sx={{ display: 'flex', mt: 2, gap: 2 }}>
+                    <Box sx={{ display: 'flex', mt: 2, gap: 2, flexWrap: 'wrap' }}>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                             <Box component="span" sx={{ width: 12, 
                                 height: 12, 
@@ -1059,9 +1801,21 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 display: 'inline-block', 
                                 mr: 1, 
                                 border: '1px solid #90caf9' 
-                            }}></Box>
+                              }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Available Slots
+                            </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box component="span" sx={{ width: 12, 
+                                height: 12, 
+                                backgroundColor: '#e8f5e9', 
+                                display: 'inline-block', 
+                                mr: 1, 
+                                border: '1px solid #a5d6a7' 
+                              }}></Box>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                                Discounted Slots
                             </Typography>
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -1071,7 +1825,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 display: 'inline-block', 
                                 mr: 1, 
                                 border: '1px solid #c3e6cb' 
-                            }}></Box>
+                              }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Your Booked Appointments
                             </Typography>
@@ -1084,7 +1838,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             {mode === 'provider' && (
                 <Box sx={{ mt: 2, px: 2 }}>
                     <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                        Your availability is displayed with appointment bookings overlaid.
+                        Your availability is displayed with appointment bookings overlaid. Click and drag on the calendar to create new availability blocks.
                     </Typography>
                     <Box sx={{ display: 'flex', mt: 2, flexWrap: 'wrap', gap: 2 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -1187,9 +1941,34 @@ const AppointmentCalendar = forwardRef(({ mode,
                                             Phone: {selectedAppointment.consumer.phone_number}
                                         </Typography>
                                     )}
-                                    {selectedAppointment?.consumer?.address && (
+                                    
+                                    {/* Updated address section to show detailed address fields */}
+                                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5 }}>
+                                        Address:
+                                    </Typography>
+                                    {selectedAppointment?.address_line1 && (
                                         <Typography variant="body2">
-                                            Address: {selectedAppointment.consumer.address}
+                                            {selectedAppointment.address_line1}
+                                        </Typography>
+                                    )}
+                                    {selectedAppointment?.address_line2 && (
+                                        <Typography variant="body2">
+                                            {selectedAppointment.address_line2}
+                                        </Typography>
+                                    )}
+                                    {(selectedAppointment?.city || selectedAppointment?.state || selectedAppointment?.zip_code) && (
+                                        <Typography variant="body2">
+                                            {[
+                                                selectedAppointment.city, 
+                                                selectedAppointment.state, 
+                                                selectedAppointment.zip_code
+                                            ].filter(Boolean).join(', ')}
+                                        </Typography>
+                                    )}
+                                    {/* Fallback to legacy address field if detailed fields aren't available */}
+                                    {!selectedAppointment?.address_line1 && selectedAppointment?.consumer?.address && (
+                                        <Typography variant="body2">
+                                            {selectedAppointment.consumer.address}
                                         </Typography>
                                     )}
                                 </Box>
@@ -1295,6 +2074,112 @@ const AppointmentCalendar = forwardRef(({ mode,
                         )}
                     </DialogActions>
                 </Dialog>
+            )}
+            
+            {/* Edit dialog for time blocks */}
+            {mode === 'provider' && (
+                <>
+                    <Dialog open={editDialogOpen} onClose={handleCloseEditDialog}>
+                        <DialogTitle>
+                            Edit Time Block for {selectedDay && format(selectedDay, 'EEEE, MMMM d')}
+                        </DialogTitle>
+                        <DialogContent>
+                            <DialogContentText sx={{ mb: 2 }}>
+                                Update the available time block.
+                            </DialogContentText>
+                            {timeError && (
+                                <Alert severity="error" sx={{ mb: 2 }}>
+                                    {timeError}
+                                </Alert>
+                            )}
+                            
+                            <LocalizationProvider dateAdapter={AdapterDateFns}>
+                                <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                                    <Box sx={{ flex: 1 }}>
+                                        <TextField
+                                            label="Start Time"
+                                            type="time"
+                                            fullWidth
+                                            value={startTime ? format(startTime, 'HH:mm') : ''}
+                                            onChange={(e) => {
+                                                const [hours, minutes] = e.target.value.split(':');
+                                                // Create new date based on selectedDay (not today)
+                                                const newTime = new Date(selectedDay);
+                                                newTime.setHours(Number(hours), Number(minutes));
+                                                setStartTime(newTime);
+                                                console.log('New start time:', newTime);
+                                            }}
+                                            InputLabelProps={{
+                                                shrink: true,
+                                            }}
+                                            inputProps={{
+                                                step: 300, // 5 min
+                                            }}
+                                        />
+                                    </Box>
+                                    <Box sx={{ flex: 1 }}>
+                                        <TextField
+                                            label="End Time"
+                                            type="time"
+                                            fullWidth
+                                            value={endTime ? format(endTime, 'HH:mm') : ''}
+                                            onChange={(e) => {
+                                                const [hours, minutes] = e.target.value.split(':');
+                                                // Create new date based on selectedDay (not today)
+                                                const newTime = new Date(selectedDay);
+                                                newTime.setHours(Number(hours), Number(minutes));
+                                                setEndTime(newTime);
+                                                console.log('New end time:', newTime);
+                                            }}
+                                            InputLabelProps={{
+                                                shrink: true,
+                                            }}
+                                            inputProps={{
+                                                step: 300, // 5 min
+                                            }}
+                                        />
+                                    </Box>
+                                </Box>
+                            </LocalizationProvider>
+                        </DialogContent>
+                        <DialogActions>
+                            <Button onClick={handleCloseEditDialog}>Cancel</Button>
+                            <Button onClick={handleSaveEditedBlock} color="primary" variant="contained">
+                                Save Changes
+                            </Button>
+                        </DialogActions>
+                    </Dialog>
+                    
+                    {/* Delete confirmation dialog */}
+                    <Dialog open={deleteDialogOpen} onClose={handleCloseDeleteDialog}>
+                        <DialogTitle>
+                            Delete Time Block
+                        </DialogTitle>
+                        <DialogContent>
+                            <DialogContentText>
+                                Are you sure you want to delete this availability block? 
+                                {deletingBlock && (
+                                    <Box component="span" sx={{ display: 'block', mt: 1, fontWeight: 'bold' }}>
+                                        {deletingBlock.start instanceof Date 
+                                            ? format(deletingBlock.start, 'h:mm a') 
+                                            : format(new Date(deletingBlock.start), 'h:mm a')
+                                        } - {
+                                        deletingBlock.end instanceof Date 
+                                            ? format(deletingBlock.end, 'h:mm a') 
+                                            : format(new Date(deletingBlock.end), 'h:mm a')
+                                        }
+                                    </Box>
+                                )}
+                            </DialogContentText>
+                        </DialogContent>
+                        <DialogActions>
+                            <Button onClick={handleCloseDeleteDialog}>Cancel</Button>
+                            <Button onClick={handleConfirmDeleteBlock} color="error" variant="contained">
+                                Delete
+                            </Button>
+                        </DialogActions>
+                    </Dialog>
+                </>
             )}
         </Box>
     );

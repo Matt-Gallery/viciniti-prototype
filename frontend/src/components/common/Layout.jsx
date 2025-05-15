@@ -62,12 +62,20 @@ const Layout = ({ children }) => {
                                         </Button>
                                     </>
                                 ) : (
-                                    <Button
-                                        color="inherit"
-                                        onClick={() => navigate('/services')}
-                                    >
-                                        Services
-                                    </Button>
+                                    <>
+                                        <Button
+                                            color="inherit"
+                                            onClick={() => navigate('/services')}
+                                        >
+                                            Services
+                                        </Button>
+                                        <Button
+                                            color="inherit"
+                                            onClick={() => navigate('/profile')}
+                                        >
+                                            Profile
+                                        </Button>
+                                    </>
                                 )}
                                 <Button
                                     color="inherit"

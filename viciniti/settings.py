@@ -38,9 +38,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.gis',
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
+    'leaflet',
+    'djgeojson',
     'main_app',
 ]
 
@@ -80,7 +83,7 @@ WSGI_APPLICATION = 'viciniti.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
+        'ENGINE': 'django.contrib.gis.db.backends.postgis',
         'NAME': 'vicinitix',
         'USER': 'admin',
         'PASSWORD': 'password',
@@ -201,4 +204,13 @@ LOGGING = {
             'propagate': True,
         },
     },
+}
+
+# Add Leaflet configuration
+LEAFLET_CONFIG = {
+    'DEFAULT_CENTER': (37.7749, -122.4194),  # Default center (San Francisco)
+    'DEFAULT_ZOOM': 12,
+    'MIN_ZOOM': 3,
+    'MAX_ZOOM': 18,
+    'ATTRIBUTION_PREFIX': 'Powered by Viciniti',
 }
