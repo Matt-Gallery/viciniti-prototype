@@ -42,7 +42,7 @@ const Layout = ({ children }) => {
                         <Link component={RouterLink} to="/" sx={{ display: 'flex', alignItems: 'center' }}>
                             <Box
                                 component="img"
-                                src="/viciniti-logo.png"
+                                src="/images/logo.png"
                                 alt="Viciniti Logo"
                                 sx={{ width: 40, height: 40, mr: 1 }}
                             />

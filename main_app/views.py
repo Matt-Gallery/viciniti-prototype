@@ -2096,6 +2096,9 @@ class ProximityDiscountConfigAPI(APIView):
             # Get or create discount configuration
             from .models import ProximityDiscountConfig
             config, created = ProximityDiscountConfig.objects.get_or_create(provider=provider)
+            if created:
+                config.is_active = True
+                config.save()
             
             # Convert config to dictionary for response
             config_data = {
