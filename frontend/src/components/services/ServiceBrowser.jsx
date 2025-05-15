@@ -16,10 +16,7 @@ import {
     DialogContent,
     DialogActions,
     TextField,
-    Grid,
-    Card,
-    CardContent,
-    CardActions
+    Grid
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { services, appointments } from '../../services/api';
@@ -66,7 +63,6 @@ const ServiceBrowser = () => {
             setLoading(false);
         })
         .catch(err => {
-            console.error('Error loading data');
             setError('Failed to load services. Please try again later.');
             setLoading(false);
         });
@@ -110,9 +106,6 @@ const ServiceBrowser = () => {
     
     // Handle time slot selection
     const handleBlockClick = (service, block) => {
-        console.log('Selected service');
-        console.log('Selected time block');
-        
         setSelectedService(service);
         setSelectedSlot(block);
         
@@ -121,7 +114,6 @@ const ServiceBrowser = () => {
         if (userStr) {
             try {
                 const userData = JSON.parse(userStr);
-                console.log('User data from localStorage:', userData);
                 
                 // Initialize booking data with user information
                 const initialData = {
@@ -139,7 +131,6 @@ const ServiceBrowser = () => {
                 
                 // If we don't have the new address fields, try to parse from the legacy address field
                 if (userData.address && (!userData.street_address || !userData.city)) {
-                    console.log('Parsing from legacy address:', userData.address);
                     const addressLines = userData.address.split(/\n|,/).map(line => line.trim());
                     
                     if (addressLines.length >= 1) {
@@ -172,10 +163,8 @@ const ServiceBrowser = () => {
                     }
                 }
                 
-                console.log('Pre-populating form with data:', initialData);
                 setBookingData(initialData);
             } catch (e) {
-                console.error('Error parsing user data', e);
                 setBookingData({
                     email: '',
                     phone: '',
@@ -188,7 +177,6 @@ const ServiceBrowser = () => {
                 });
             }
         } else {
-            console.log('No user data found in localStorage');
             setBookingData({
                 email: '',
                 phone: '',
@@ -302,18 +290,19 @@ const ServiceBrowser = () => {
             setTimeout(() => {
                 setBookingDialogOpen(false);
                 setBookingSuccess(false);
+                
+                // Refresh ALL calendars to ensure appointments are up-to-date everywhere
+                Object.keys(calendarRefs.current).forEach(serviceId => {
+                    if (calendarRefs.current[serviceId]) {
+                        calendarRefs.current[serviceId].fetchUserAppointments();
+                    }
+                });
+                
                 setSelectedService(null);
                 setSelectedSlot(null);
-                
-                // Refresh the calendar for this service
-                if (calendarRefs.current[selectedService.id]) {
-                    console.log('Refreshing calendar after booking');
-                    calendarRefs.current[selectedService.id].fetchUserAppointments();
-                }
             }, 2000);
             
         } catch (error) {
-            console.error('Error creating appointment');
             setBookingError('Failed to book appointment. Please try again.');
             setBookingInProgress(false);
         }
@@ -412,54 +401,55 @@ const ServiceBrowser = () => {
                 }}>
                     {selectedSubCategory ? (
                         filteredServices.length > 0 ? (
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
-                                {filteredServices.map(service => (
-                                    <Box key={service.id} sx={{ width: '100%' }}>
-                                        <Paper sx={{ p: 2, mb: 2, width: '100%', background: 'linear-gradient(135deg, #23203a 60%, #232a5c 100%)', color: '#f5f6fa', borderRadius: 3, boxShadow: '0 4px 24px 0 rgba(0,0,0,0.18)' }}>
-                                            <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                                                <Box sx={{ mb: 2 }}>
-                                                    <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1.1rem' }}>
-                                                        {service.name}
-                                                    </Typography>
-                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                                                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1, maxWidth: '65%' }}>
-                                                            {service.description}
+                            <Box sx={{ width: '100%' }}>
+                                <Typography variant="h5" gutterBottom>
+                                    Available Services
+                                </Typography>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
+                                    {filteredServices.map(service => (
+                                        <Box key={service.id} sx={{ width: '100%' }}>
+                                            <Paper sx={{ p: 2, mb: 2, width: '100%' }}>
+                                                <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                                                    <Box sx={{ mb: 2 }}>
+                                                        <Typography variant="h6" sx={{ fontSize: '1.1rem' }}>
+                                                            {service.name}
                                                         </Typography>
-                                                        <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                                                            <Typography variant="body2" color="primary" fontWeight={700}>
-                                                                ${service.price}
+                                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1, maxWidth: '65%' }}>
+                                                                {service.description}
                                                             </Typography>
-                                                            <Typography variant="body2">
-                                                                {service.duration} min
-                                                            </Typography>
-                                                            <Typography variant="body2" color="secondary.main">
-                                                                {service.provider.business_name}
-                                                            </Typography>
+                                                            <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                                                <Typography variant="body2">
+                                                                    Provider: {service.provider.business_name}
+                                                                </Typography>
+                                                                <Typography variant="body2">
+                                                                    Duration: {service.duration} minutes
+                                                                </Typography>
+                                                                <Typography variant="body2" fontWeight="bold" color="primary.main">
+                                                                    ${service.price}
+                                                                </Typography>
+                                                            </Box>
                                                         </Box>
                                                     </Box>
-                                                    <Typography variant="caption" color="text.secondary">
-                                                        Category: {service.category.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' > ')}
+                                                    <Typography variant="subtitle1" sx={{ mb: 1, mt: 1 }}>
+                                                        Available Appointments
                                                     </Typography>
+                                                    <Box sx={{ height: '450px', width: '100%', overflow: 'hidden' }}>
+                                                        <AppointmentCalendar
+                                                            ref={el => calendarRefs.current[service.id] = el}
+                                                            mode="consumer"
+                                                            serviceId={service.id}
+                                                            service={service}
+                                                            daysToShow={5}
+                                                            onBlockClick={(block) => handleBlockClick(service, block)}
+                                                            title={`Available Appointments for ${service.name}`}
+                                                        />
+                                                    </Box>
                                                 </Box>
-                                                <Divider sx={{ my: 1, bgcolor: 'rgba(255,255,255,0.08)' }} />
-                                                <Typography variant="subtitle1" sx={{ mb: 1, mt: 1 }}>
-                                                    Available Appointments
-                                                </Typography>
-                                                <Box sx={{ height: '450px', width: '100%', overflow: 'hidden' }}>
-                                                    <AppointmentCalendar
-                                                        ref={el => calendarRefs.current[service.id] = el}
-                                                        mode="consumer"
-                                                        serviceId={service.id}
-                                                        service={service}
-                                                        daysToShow={5}
-                                                        onBlockClick={(block) => handleBlockClick(service, block)}
-                                                        title={`Available Appointments for ${service.name}`}
-                                                    />
-                                                </Box>
-                                            </Box>
-                                        </Paper>
-                                    </Box>
-                                ))}
+                                            </Paper>
+                                        </Box>
+                                    ))}
+                                </Box>
                             </Box>
                         ) : (
                             <Box sx={{ textAlign: 'center', py: 3 }}>
@@ -501,6 +491,20 @@ const ServiceBrowser = () => {
                             <Typography variant="body1">
                                 {selectedService?.name} on {selectedSlot && format(selectedSlot.start, 'EEEE, MMMM d')} at {selectedSlot && format(selectedSlot.start, 'h:mm a')}
                             </Typography>
+                            {selectedSlot && selectedSlot.discountPercentage > 0 ? (
+                                <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <Typography variant="body2" color="text.secondary">
+                                        Original price: <span style={{ textDecoration: 'line-through' }}>${selectedSlot.originalPrice}</span>
+                                    </Typography>
+                                    <Typography variant="body1" color="success.main" fontWeight="bold">
+                                        Final price: ${selectedSlot.discountedPrice} ({selectedSlot.discountPercentage}% discount)
+                                    </Typography>
+                                </Box>
+                            ) : (
+                                <Typography variant="body2" sx={{ mt: 1 }}>
+                                    Price: ${selectedService?.price}
+                                </Typography>
+                            )}
                         </Box>
                     ) : (
                         <>
@@ -523,9 +527,47 @@ const ServiceBrowser = () => {
                                 <Typography variant="body2">
                                     Provider: {selectedService?.provider.business_name}
                                 </Typography>
-                                <Typography variant="body2" color="primary">
-                                    Price: ${selectedService?.price}
-                                </Typography>
+                                {selectedSlot && selectedSlot.discountPercentage > 0 ? (
+                                    <Box sx={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center',
+                                        gap: 1,
+                                        mt: 1,
+                                        flexWrap: 'wrap'
+                                    }}>
+                                        <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
+                                            ${selectedSlot.originalPrice}
+                                        </Typography>
+                                        <Typography variant="caption" sx={{ color: 'success.main' }}>
+                                            -{selectedSlot.discountPercentage}%
+                                        </Typography>
+                                        <Typography variant="body2" color="success.main" sx={{ fontWeight: 'bold' }}>
+                                            ${selectedSlot.discountedPrice}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary" sx={{ width: '100%', mt: 0.5, display: 'block' }}>
+                                            Discount applied based on proximity to other appointments
+                                        </Typography>
+                                    </Box>
+                                ) : (
+                                    <Box sx={{ mt: 1 }}>
+                                        {(() => {
+                                            const orig = Number(selectedSlot.originalPrice ?? selectedService?.price);
+                                            const discRaw = selectedSlot.discountedPrice;
+                                            const disc = discRaw !== undefined && discRaw !== null ? Number(discRaw) : orig;
+                                            const useDiscount = disc < orig;
+                                            return (
+                                                <Typography variant="body2" color={useDiscount ? 'success.main' : 'primary'}>
+                                                    Price: ${useDiscount ? disc.toFixed(2) : orig.toFixed(2)}
+                                                    {useDiscount && (
+                                                        <Typography component="span" variant="body2" sx={{ ml: 1, textDecoration: 'line-through', color: 'text.secondary' }}>
+                                                            ${orig.toFixed(2)}
+                                                        </Typography>
+                                                    )}
+                                                </Typography>
+                                            );
+                                        })()}
+                                    </Box>
+                                )}
                                 <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontSize: '0.85rem', bgcolor: 'rgba(0, 0, 0, 0.03)', p: 1 }}>
                                     Duration: {selectedService?.duration} minutes
                                 </Typography>
