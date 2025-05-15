@@ -231,7 +231,15 @@ class ProviderAvailability(models.Model):
 class ProximityDiscountConfig(models.Model):
     """
     Configuration for proximity-based discounts for a specific provider.
+    
     Defines discount percentages based on distance tiers and number of appointments.
+    
+    Discounts are only applied when:
+    1. An appointment slot is temporally adjacent (immediately before or after) to existing appointments
+    2. Those existing appointments are geographically close to the consumer's location
+    
+    This encourages consumers to book multiple appointments in the same area during a single trip,
+    reducing travel time and expenses for service providers.
     """
     provider = models.OneToOneField(ServiceProvider, on_delete=models.CASCADE, related_name='discount_config')
     is_active = models.BooleanField(default=True)
