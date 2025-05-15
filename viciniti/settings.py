@@ -15,7 +15,7 @@ import os
 from dotenv import load_dotenv
 import dj_database_url
 
-
+GDAL_LIBRARY_PATH = os.getenv("GDAL_LIBRARY_PATH", "/app/.heroku/apt/usr/lib/libgdal.so")
 load_dotenv()
 
 
