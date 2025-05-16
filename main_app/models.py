@@ -295,38 +295,27 @@ class ProximityDiscountConfig(models.Model):
         Returns:
             Discount percentage as an integer (0-100)
         """
-        # Add debug logging
-        print(f"!!!!! DISCOUNT MODEL: Starting discount calculation for distance {distance_yards:.2f} yards with {appointment_count} appointments !!!!!")
-        
         # Cap the appointment count at 5
         if appointment_count > 5:
             appointment_count = 5
-            print(f"!!!!! DISCOUNT MODEL: Capped appointment count at 5 !!!!!")
         elif appointment_count < 1:
             appointment_count = 1
-            print(f"!!!!! DISCOUNT MODEL: Minimum appointment count set to 1 !!!!!")
         
         # Determine which tier the distance falls into
         if distance_yards <= self.tier1_distance:
             tier = 1
-            print(f"!!!!! DISCOUNT MODEL: Distance {distance_yards:.2f} yards falls in Tier 1 (0-{self.tier1_distance}) !!!!!")
         elif self.tier2_min_distance <= distance_yards <= self.tier2_max_distance:
             tier = 2
-            print(f"!!!!! DISCOUNT MODEL: Distance {distance_yards:.2f} yards falls in Tier 2 ({self.tier2_min_distance}-{self.tier2_max_distance}) !!!!!")
         elif self.tier3_min_distance <= distance_yards <= self.tier3_max_distance:
             tier = 3
-            print(f"!!!!! DISCOUNT MODEL: Distance {distance_yards:.2f} yards falls in Tier 3 ({self.tier3_min_distance}-{self.tier3_max_distance}) !!!!!")
         elif self.tier4_min_distance <= distance_yards <= self.tier4_max_distance:
             tier = 4
-            print(f"!!!!! DISCOUNT MODEL: Distance {distance_yards:.2f} yards falls in Tier 4 ({self.tier4_min_distance}-{self.tier4_max_distance}) !!!!!")
         else:
             # Beyond maximum distance, no discount
-            print(f"!!!!! DISCOUNT MODEL: Distance {distance_yards:.2f} yards is beyond maximum tier distance of {self.tier4_max_distance} !!!!!")
             return 0
         
         # Get the appropriate discount based on tier and appointment count
         field_name = f"tier{tier}_{appointment_count}appt_discount"
         discount = getattr(self, field_name, 0)
-        print(f"!!!!! DISCOUNT MODEL: Final result - Tier {tier} with {appointment_count} appointments, field={field_name}, discount={discount}% !!!!!")
         
         return discount

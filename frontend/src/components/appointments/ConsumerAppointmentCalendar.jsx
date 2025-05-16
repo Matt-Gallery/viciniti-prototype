@@ -58,6 +58,25 @@ const ConsumerAppointmentCalendar = ({
     
     // Handle time slot selection
     const handleBlockClick = (block) => {
+        // DIRECT DEBUG LOG WITH DUMP OF ENTIRE OBJECT CONTENTS
+        console.log('DIRECT DEBUG - EXACT BLOCK OBJECT FROM CALENDAR:');
+        console.dir(block);
+        console.log('DIRECT DEBUG - BLOCK DISCOUNT PROPERTIES:', {
+            hasOwnProperty_originalPrice: block.hasOwnProperty('originalPrice'),
+            hasOwnProperty_discountPercentage: block.hasOwnProperty('discountPercentage'),
+            hasOwnProperty_discountedPrice: block.hasOwnProperty('discountedPrice'),
+            value_originalPrice: block.originalPrice,
+            value_discountPercentage: block.discountPercentage,
+            value_discountedPrice: block.discountedPrice,
+            discountActive: block.discountPercentage > 0
+        });
+        
+        console.log('PRICE DATA FROM CALENDAR:', {
+            originalPrice: block.originalPrice,
+            discountPercentage: block.discountPercentage,
+            discountedPrice: block.discountedPrice
+        });
+        
         setSelectedSlot(block);
         
         // Initialize with empty values
@@ -362,6 +381,27 @@ const ConsumerAppointmentCalendar = ({
                             <Typography variant="body1">
                                 {service.name} on {selectedSlot && format(selectedSlot.start, 'EEEE, MMMM d')} at {selectedSlot && format(selectedSlot.start, 'h:mm a')}
                             </Typography>
+                            {/* Price Information */}
+                            {selectedSlot && (
+                                <Box sx={{ mt: 2 }}>
+                                    {(() => {
+                                        const orig = Number(selectedSlot.originalPrice ?? service.price);
+                                        const discRaw = selectedSlot.discountedPrice;
+                                        const disc = discRaw !== undefined && discRaw !== null ? Number(discRaw) : orig;
+                                        const useDiscount = disc < orig;
+                                        return (
+                                            <Typography variant="h6" color={useDiscount ? 'success.main' : 'text.primary'}>
+                                                ${useDiscount ? disc.toFixed(2) : orig.toFixed(2)}
+                                                {useDiscount && (
+                                                    <Typography component="span" variant="body2" sx={{ ml: 1, textDecoration: 'line-through', color: 'text.secondary' }}>
+                                                        ${orig.toFixed(2)}
+                                                    </Typography>
+                                                )}
+                                            </Typography>
+                                        );
+                                    })()}
+                                </Box>
+                            )}
                         </Box>
                     ) : (
                         <>
@@ -384,38 +424,29 @@ const ConsumerAppointmentCalendar = ({
                                 <Typography variant="body2">
                                     Provider: {service.provider.business_name}
                                 </Typography>
-                                {selectedSlot && selectedSlot.discountPercentage > 0 ? (
-                                    <Box sx={{ 
-                                        display: 'flex', 
-                                        alignItems: 'center',
-                                        gap: 1,
-                                        mt: 1,
-                                        flexWrap: 'wrap'
-                                    }}>
-                                        <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
-                                            ${selectedSlot.originalPrice}
-                                        </Typography>
-                                        <Typography variant="caption" sx={{ 
-                                            color: 'success.main',
-                                            bgcolor: 'success.light',
-                                            px: 0.5,
-                                            py: 0.1,
-                                            borderRadius: '4px'
-                                        }}>
-                                            -{selectedSlot.discountPercentage}%
-                                        </Typography>
-                                        <Typography variant="body2" color="success.main" sx={{ fontWeight: 'bold' }}>
-                                            ${selectedSlot.discountedPrice}
-                                        </Typography>
-                                        <Typography variant="caption" color="text.secondary" sx={{ width: '100%', mt: 0.5, display: 'block' }}>
-                                            Discount applied based on proximity to other appointments
-                                        </Typography>
+                                
+                                {/* Price Information */}
+                                {selectedSlot && (
+                                    <Box sx={{ mt: 2, mb: 1 }}>
+                                        {(() => {
+                                            const orig = Number(selectedSlot.originalPrice ?? service.price);
+                                            const discRaw = selectedSlot.discountedPrice;
+                                            const disc = discRaw !== undefined && discRaw !== null ? Number(discRaw) : orig;
+                                            const useDiscount = disc < orig;
+                                            return (
+                                                <Typography variant="h6" color={useDiscount ? 'success.main' : 'text.primary'}>
+                                                    ${useDiscount ? disc.toFixed(2) : orig.toFixed(2)}
+                                                    {useDiscount && (
+                                                        <Typography component="span" variant="body2" sx={{ ml: 1, textDecoration: 'line-through', color: 'text.secondary' }}>
+                                                            ${orig.toFixed(2)}
+                                                        </Typography>
+                                                    )}
+                                                </Typography>
+                                            );
+                                        })()}
                                     </Box>
-                                ) : (
-                                    <Typography variant="body2" color="primary">
-                                        Price: ${service.price}
-                                    </Typography>
                                 )}
+                                
                                 <Typography variant="body2" color="text.secondary" sx={{ mt: 2, fontSize: '0.85rem', bgcolor: 'rgba(0, 0, 0, 0.03)', p: 1 }}>
                                     Duration: {service.duration} minutes
                                 </Typography>

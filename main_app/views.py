@@ -1190,7 +1190,6 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
         try:
             # Add debug logging
             print(f"DEBUG AVAILABILITY: Calculating availability with discounts for service {service_id}")
-            print("!!!!! VERBOSE DEBUG: Starting discount calculation flow !!!!!")
             
             from .models import Service, ProviderAvailability, Appointment, ProximityDiscountConfig, User
             from django.contrib.gis.db.models.functions import Distance
@@ -1208,14 +1207,11 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
             
             # Log the discount configuration
             if discount_config:
-                print(f"!!!!! VERBOSE DEBUG: Found discount config: {discount_config.id} !!!!!")
                 print(f"DEBUG DISCOUNT CONFIG: Tiers and distances:")
                 print(f"  - Tier 1: 0-{discount_config.tier1_distance} yards - Discounts: {discount_config.tier1_1appt_discount}%-{discount_config.tier1_5appt_discount}%")
                 print(f"  - Tier 2: {discount_config.tier2_min_distance}-{discount_config.tier2_max_distance} yards - Discounts: {discount_config.tier2_1appt_discount}%-{discount_config.tier2_5appt_discount}%")
                 print(f"  - Tier 3: {discount_config.tier3_min_distance}-{discount_config.tier3_max_distance} yards - Discounts: {discount_config.tier3_1appt_discount}%-{discount_config.tier3_5appt_discount}%")
                 print(f"  - Tier 4: {discount_config.tier4_min_distance}-{discount_config.tier4_max_distance} yards - Discounts: {discount_config.tier4_1appt_discount}%-{discount_config.tier4_5appt_discount}%")
-            else:
-                print("!!!!! VERBOSE DEBUG: No discount config found for this provider !!!!!")
             
             # Check if discounts are enabled
             discounts_enabled = discount_config and discount_config.is_active
@@ -1228,15 +1224,6 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
             )
             
             print(f"DEBUG DISCOUNT: Found {existing_appointments.count()} existing appointments")
-            
-            # Log more details about existing appointments
-            for idx, appt in enumerate(existing_appointments):
-                print(f"!!!!! VERBOSE DEBUG: Appointment {idx}: ID={appt.id}, Location={appt.location is not None}, " +
-                      f"Address={appt.address_line1}, {appt.city}, {appt.state}")
-                if appt.location:
-                    print(f"  - Lat/Lng: {appt.latitude}, {appt.longitude}")
-                else:
-                    print(f"  - NO LOCATION DATA FOR THIS APPOINTMENT")
             
             # Buffer time in minutes to add to both sides of appointments
             buffer_minutes = 15
@@ -1264,14 +1251,8 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                     user = User.objects.get(id=request.user.id)
                     consumer_location = user.location
                     print(f"DEBUG DISCOUNT: Consumer location found: {consumer_location is not None}")
-                    if consumer_location:
-                        print(f"!!!!! VERBOSE DEBUG: Consumer has location: Lat={consumer_location.y}, Lng={consumer_location.x} !!!!!")
-                    else:
-                        print(f"!!!!! VERBOSE DEBUG: Consumer has NO location data !!!!!")
                 except Exception as e:
                     print(f"DEBUG DISCOUNT: Error getting consumer location: {str(e)}")
-            else:
-                print(f"!!!!! VERBOSE DEBUG: No authenticated user, cannot calculate personalized discounts !!!!!")
             
             # Log a warning if user doesn't have location data
             if request.user.is_authenticated and not consumer_location:
@@ -1377,8 +1358,6 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                         
                         # If the slot is available and discounts are enabled, calculate any applicable discount
                         if is_available and discounts_enabled and consumer_location:
-                            print(f"!!!!! VERBOSE DEBUG: Calculating discount for slot {slot['id']} !!!!!")
-                            
                             # First filter for time-adjacent appointments (immediately before or after this slot)
                             # Define what "adjacent" means in minutes
                             time_adjacency_threshold_minutes = 60  # Consider appointments within 1 hour to be adjacent
@@ -1391,15 +1370,11 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                             for appt in existing_appointments:
                                 # Check if appointment ends shortly before this slot begins
                                 if slot['start'] - time_adjacency_threshold <= appt.end_time <= slot['start']:
-                                    print(f"!!!!! VERBOSE DEBUG: Found appointment {appt.id} ending before slot starts !!!!!")
                                     time_adjacent_appointments.append(appt)
                                 
                                 # Check if appointment begins shortly after this slot ends
                                 elif slot['end'] <= appt.start_time <= slot['end'] + time_adjacency_threshold:
-                                    print(f"!!!!! VERBOSE DEBUG: Found appointment {appt.id} starting after slot ends !!!!!")
                                     time_adjacent_appointments.append(appt)
-                            
-                            print(f"!!!!! VERBOSE DEBUG: Found {len(time_adjacent_appointments)} time-adjacent appointments !!!!!")
                             
                             # Only proceed if we have time-adjacent appointments
                             if time_adjacent_appointments:
@@ -1409,40 +1384,27 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                                 # Find nearby appointments within maximum tier distance
                                 max_distance = discount_config.tier4_max_distance  # Use the largest tier distance
                                 
-                                print(f"!!!!! VERBOSE DEBUG: Checking for time-adjacent appointments within {max_distance} yards !!!!!")
-                                
                                 for appt in time_adjacent_appointments:
                                     # Skip if appointment has no location
                                     if not appt.location or not consumer_location:
-                                        print(f"!!!!! VERBOSE DEBUG: Skipping appointment {appt.id} - Missing location data !!!!!")
                                         continue
                                         
                                     # Calculate distance between consumer and appointment location in yards
                                     # PostGIS uses meters for geography calculations
                                     try:
-                                        # Debug the locations we're comparing
-                                        print(f"!!!!! VERBOSE DEBUG: Calculating distance - Consumer({consumer_location.y},{consumer_location.x}) to Appt({appt.latitude},{appt.longitude}) !!!!!")
-                                        
                                         distance_m = consumer_location.distance(appt.location) * 100000  # Convert to meters
                                         distance_yards = distance_m * 1.09361  # Convert meters to yards
-                                        
-                                        print(f"!!!!! VERBOSE DEBUG: Time-adjacent appointment {appt.id} is {distance_yards:.2f} yards away !!!!!")
                                         
                                         if distance_yards <= max_distance:
                                             nearby_appointments.append({
                                                 'appointment': appt,
                                                 'distance_yards': distance_yards
                                             })
-                                            print(f"!!!!! VERBOSE DEBUG: Added to nearby appointments - within discount range !!!!!")
-                                        else:
-                                            print(f"!!!!! VERBOSE DEBUG: Appointment too far away ({distance_yards:.2f} yards) - max: {max_distance} !!!!!")
                                     except Exception as e:
-                                        print(f"!!!!! VERBOSE DEBUG: Distance calculation error: {str(e)} !!!!!")
+                                        continue
                                 
                                 # Sort by distance (closest first)
                                 nearby_appointments.sort(key=lambda x: x['distance_yards'])
-                                
-                                print(f"!!!!! VERBOSE DEBUG: Found {len(nearby_appointments)} nearby AND time-adjacent appointments !!!!!")
                                 
                                 # If we have nearby and time-adjacent appointments, calculate a discount
                                 if nearby_appointments:
@@ -1450,31 +1412,14 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                                     closest_distance = nearby_appointments[0]['distance_yards']
                                     appt_count = min(len(nearby_appointments), 5)  # Cap at 5 for discount tiers
                                     
-                                    print(f"!!!!! VERBOSE DEBUG: About to call get_discount_for_distance_and_count with {closest_distance:.2f} yards and {appt_count} appointments !!!!!")
-                                    
                                     # Calculate discount based on distance and appointment count
                                     discount_percentage = discount_config.get_discount_for_distance_and_count(
                                         closest_distance, appt_count
                                     )
                                     
-                                    print(f"!!!!! VERBOSE DEBUG: Calculated discount: {discount_percentage}% !!!!!")
-                                    
                                     if discount_percentage > 0:
                                         slot['discount_percentage'] = discount_percentage
                                         slot['discounted_price'] = round(slot['original_price'] * (1 - discount_percentage / 100), 2)
-                                        print(f"!!!!! VERBOSE DEBUG: Applied {discount_percentage}% discount for slot {slot['id']} !!!!!")
-                                    else:
-                                        print(f"!!!!! VERBOSE DEBUG: No discount applied - calculated percentage was 0% !!!!!")
-                                else:
-                                    print(f"!!!!! VERBOSE DEBUG: No nearby AND time-adjacent appointments found - no discount applied !!!!!")
-                            else:
-                                print(f"!!!!! VERBOSE DEBUG: No time-adjacent appointments found - no discount applied !!!!!")
-                        elif not is_available:
-                            print(f"!!!!! VERBOSE DEBUG: Slot not available, skipping discount calculation !!!!!")
-                        elif not discounts_enabled:
-                            print(f"!!!!! VERBOSE DEBUG: Discounts not enabled for this provider !!!!!")
-                        elif not consumer_location:
-                            print(f"!!!!! VERBOSE DEBUG: No consumer location, cannot calculate distance-based discount !!!!!")
                         
                         if is_available:
                             available_slots.append(slot)
@@ -1498,7 +1443,6 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                         }
                         date_availability[date_str].append(new_slot)
             
-            print("!!!!! VERBOSE DEBUG: Completed discount calculations !!!!!")
             return Response(date_availability)
         
         except Exception as e:

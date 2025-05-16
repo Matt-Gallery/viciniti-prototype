@@ -993,48 +993,73 @@ const AppointmentCalendar = forwardRef(({ mode,
         const hourEnd = new Date(day);
         hourEnd.setHours(hour + 1, 0, 0, 0);
 
-        // Render all split availability segments for this hour
+        // Collect availability segments for this hour
         const availabilitySegments = [];
         blocks.forEach(block => {
             const blockStart = block.start instanceof Date ? block.start : new Date(block.start);
             const blockEnd = block.end instanceof Date ? block.end : new Date(block.end);
-            // Only consider blocks that overlap this hour
+
+            // Skip blocks that don't overlap this hour at all
             if (!areIntervalsOverlapping({ start: blockStart, end: blockEnd }, { start: hourStart, end: hourEnd })) return;
 
-            // Find all overlapping appointments for this block
-            const overlappingApts = allAppointments.filter(apt => {
-                const aptStart = new Date(apt.start_time);
-                const aptEnd = new Date(apt.end_time);
-                return areIntervalsOverlapping({ start: blockStart, end: blockEnd }, { start: aptStart, end: aptEnd });
-            });
+            // Provider view: render a SINGLE segment for the entire block (slightly wider background)
+            if (mode === 'provider') {
+                // Only push once – when we're at the hour that contains the block start time.
+                if (hour !== blockStart.getHours()) return;
 
-            // If no overlap, render the whole block
-            if (overlappingApts.length === 0) {
-                availabilitySegments.push({ start: blockStart, end: blockEnd, block });
-            } else {
-                // Split the block into available segments around appointments
-                let segments = [];
-                let currentStart = blockStart;
-                // Sort appointments by start time
-                const sortedApts = overlappingApts.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-                sortedApts.forEach((apt, idx) => {
+                // Determine if block is fully booked
+                const overlappingApts = allAppointments.filter(apt => {
                     const aptStart = new Date(apt.start_time);
                     const aptEnd = new Date(apt.end_time);
-                    if (currentStart < aptStart) {
-                        segments.push({ start: currentStart, end: aptStart, block });
-                    }
-                    currentStart = aptEnd > currentStart ? aptEnd : currentStart;
+                    return areIntervalsOverlapping({ start: blockStart, end: blockEnd }, { start: aptStart, end: aptEnd });
                 });
-                // Add the last segment if any
-                if (currentStart < blockEnd) {
-                    segments.push({ start: currentStart, end: blockEnd, block });
+
+                const blockDurationMin = (blockEnd - blockStart) / 60000;
+                let bookedMin = 0;
+                overlappingApts.forEach(apt => {
+                    const aptStart = new Date(apt.start_time);
+                    const aptEnd = new Date(apt.end_time);
+                    const overlapStart = aptStart > blockStart ? aptStart : blockStart;
+                    const overlapEnd = aptEnd < blockEnd ? aptEnd : blockEnd;
+                    if (overlapEnd > overlapStart) {
+                        bookedMin += (overlapEnd - overlapStart) / 60000;
+                    }
+                });
+
+                const fullyBooked = bookedMin >= blockDurationMin - 1; // small tolerance
+
+                availabilitySegments.push({ start: blockStart, end: blockEnd, block, fullyBooked });
+            } else {
+                // Consumer view – split the block into open segments around appointments
+                const overlappingApts = allAppointments.filter(apt => {
+                    const aptStart = new Date(apt.start_time);
+                    const aptEnd = new Date(apt.end_time);
+                    return areIntervalsOverlapping({ start: blockStart, end: blockEnd }, { start: aptStart, end: aptEnd });
+                });
+
+                if (overlappingApts.length === 0) {
+                    availabilitySegments.push({ start: blockStart, end: blockEnd, block });
+                } else {
+                    let segments = [];
+                    let currentStart = blockStart;
+                    const sortedApts = overlappingApts.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+                    sortedApts.forEach(apt => {
+                        const aptStart = new Date(apt.start_time);
+                        const aptEnd = new Date(apt.end_time);
+                        if (currentStart < aptStart) {
+                            segments.push({ start: currentStart, end: aptStart, block });
+                        }
+                        currentStart = aptEnd > currentStart ? aptEnd : currentStart;
+                    });
+                    if (currentStart < blockEnd) {
+                        segments.push({ start: currentStart, end: blockEnd, block });
+                    }
+                    segments.forEach(seg => {
+                        if (areIntervalsOverlapping({ start: seg.start, end: seg.end }, { start: hourStart, end: hourEnd })) {
+                            availabilitySegments.push(seg);
+                        }
+                    });
                 }
-                // Only push segments that overlap this hour
-                segments.forEach(seg => {
-                    if (areIntervalsOverlapping({ start: seg.start, end: seg.end }, { start: hourStart, end: hourEnd })) {
-                        availabilitySegments.push(seg);
-                    }
-                });
             }
         });
 
@@ -1054,8 +1079,8 @@ const AppointmentCalendar = forwardRef(({ mode,
                         top: `${top}px`,
                         height: `${height}px`,
                         zIndex: 3,
-                        width: 'calc(100% - 8px)',
-                        left: '4px'
+                        width: mode === 'provider' ? '100%' : 'calc(100% - 8px)',
+                        left: mode === 'provider' ? 0 : '4px'
                     }}
                     onClick={() => {
                         if (mode === 'provider') {
@@ -1076,9 +1101,12 @@ const AppointmentCalendar = forwardRef(({ mode,
                             </Typography>
                         </>
                     ) : (
-                        <Typography variant="caption" sx={{ fontSize: '0.85rem', fontWeight: 600, color: 'inherit', width: '100%', textAlign: 'center', lineHeight: 1 }}>
-                            Available{mode === 'consumer' && service ? `  $${service.price}` : ''}
-                        </Typography>
+                        // Show "Available" text conditionally to avoid repetition in provider view
+                        (!(mode === 'provider' && seg.fullyBooked)) && (
+                            <Typography variant="caption" sx={{ fontSize: '0.85rem', fontWeight: 600, color: 'inherit', width: '100%', textAlign: 'center', lineHeight: 1 }}>
+                                Available{mode === 'consumer' && service ? `  $${service.price}` : ''}
+                            </Typography>
+                        )
                     )}
                     {mode === 'provider' && (
                         <Box sx={{ position: 'absolute', right: 4, top: 4, display: 'flex', gap: 0.5 }}>
@@ -1140,8 +1168,8 @@ const AppointmentCalendar = forwardRef(({ mode,
                             top: `${top}px`,
                             height: `${height}px`,
                             zIndex: 4,
-                            width: 'calc(100% - 8px)',
-                            left: '4px',
+                            width: mode === 'provider' ? 'calc(100% - 16px)' : 'calc(100% - 8px)',
+                            left: mode === 'provider' ? '8px' : '4px',
                             minHeight: '32px',
                             display: 'flex',
                             flexDirection: 'row',
@@ -1545,17 +1573,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 {mode === 'consumer' && service && (
                     <div></div>
                 )}
-                {mode === 'provider' && providerId && (
-                    <Button 
-                        variant="contained"
-                        color="primary"
-                        onClick={saveAvailability}
-                        disabled={loading}
-                        size="small"
-                    >
-                        {loading ? <CircularProgress size={20} /> : 'Save Availability'}
-                    </Button>
-                )}
+                {/* Save Availability button removed */}
             </Box>
             {error && (
                 <Alert severity="error" sx={{ mb: 2, py: 1, fontSize: '0.75rem' }}>
@@ -1581,6 +1599,34 @@ const AppointmentCalendar = forwardRef(({ mode,
                 </Box>
             )}
             
+            {/* Fixed header row to remain visible during vertical scroll */}
+            <Box sx={{ display: 'flex', width: 'max-content', position: 'sticky', top: 0, zIndex: 500 }}>
+                {/* Spacer for time labels column */}
+                <Box sx={{ width: '25px', flexShrink: 0 }} />
+                {days.map((day, index) => (
+                    <Box
+                        key={`fixed-header-${index}`}
+                        sx={{
+                            width: '250px',
+                            minWidth: '250px',
+                            bgcolor: 'primary.main',
+                            color: 'white',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            height: '39px',
+                            borderRight: index < days.length - 1 ? '1px solid rgba(255, 255, 255, 0.2)' : 'none',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                            marginRight: index < days.length - 1 ? '8px' : 0
+                        }}
+                    >
+                        <Typography variant="subtitle2" fontWeight="bold" sx={{ fontSize: '0.8rem' }}>
+                            {format(day, 'EEE, MMM d')}
+                        </Typography>
+                    </Box>
+                ))}
+            </Box>
+            
             <Box sx={{ display: 'flex', flexDirection: 'row', flex: 1, overflow: 'hidden', width: '100%' }}>
                 { /* Main scrollable container with time labels and day columns */ }
                 <Box sx={{ display: 'flex', 
@@ -1595,7 +1641,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                       ref={scrollContainerRef}
                       sx={{ display: 'flex', 
                         flexDirection: 'row',
-                        width: '100%',
+                        width: 'max-content',
                         height: '480px',
                         overflow: 'auto',
                         position: 'relative'
@@ -1605,14 +1651,14 @@ const AppointmentCalendar = forwardRef(({ mode,
                       onMouseLeave={handleMouseLeave}
                     >
                         { /* Time labels column - inside the scrollable area */ }
-                        <Box sx={{ width: '30px', flexShrink: 0, position: 'sticky', left: 0, zIndex: 5, bgcolor: '#f5f5f5'   }}>
+                        <Box sx={{ width: '25px', flexShrink: 0, position: 'sticky', left: 0, zIndex: 5, bgcolor: '#f5f5f5'   }}>
                             { /* Day header placeholder to align with day columns */ }
                             <Box sx={{ 
                                 height: '39px', 
                                 borderBottom: '2px solid rgba(0, 0, 0, 0.1)', 
                                 position: 'sticky',
                                 top: 0,
-                                zIndex: 100,
+                                zIndex: 200,
                                 bgcolor: '#f5f5f5',
                                 boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
                             }}></Box> { /* Match day header height */ }
@@ -1647,18 +1693,18 @@ const AppointmentCalendar = forwardRef(({ mode,
                         <Box sx={{ 
                             display: 'flex', 
                             flex: 1,
-                            width: 'calc(100% - 30px)',
+                            width: 'max-content',
                             position: 'relative'
                         }}>
                             {days.map((day, index) => {
                                 const dateStr = format(day, 'yyyy-MM-dd');
-                                const flexBasis = `${100 / days.length}%`;
+                                const flexBasis = '250px';
                                 
                                 return (
                                     <Box key={index} sx={{ 
-                                        flex: `1 1 ${flexBasis}`,
-                                        minWidth: '100px',
-                                        marginRight: index < days.length - 1 ? '0.5rem' : 0,
+                                        flex: `0 0 ${flexBasis}`,
+                                        minWidth: flexBasis,
+                                        marginRight: index < days.length - 1 ? '8px' : 0,
                                         position: 'relative',
                                         display: 'flex',
                                         flexDirection: 'column',
@@ -1666,21 +1712,23 @@ const AppointmentCalendar = forwardRef(({ mode,
                                         ...(index < days.length - 1 && { borderRight: '1px solid rgba(0, 0, 0, 0.12)' }) // Simple border approach
                                     }}>
                                         { /* Day header - sticky at top with higher z-index */ }
-                                        <Box sx={{ p: 1, 
-                                            bgcolor: 'primary.main', 
-                                            color: 'white',
-                                            borderRadius: '4px 4px 0 0',
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            position: 'sticky',
-                                            top: 0,
-                                            zIndex: 10, // Higher z-index to ensure it stays on top
-                                            height: '39px',
-                                            borderBottom: '2px solid rgba(255, 255, 255, 0.2)', // Add bottom border to day header
-                                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)' // Add subtle shadow for depth
-                                          }}>
-                                            <Typography variant="subtitle2" fontWeight="bold" sx={{ fontSize: '0.8rem'   }}>
+                                        <Box sx={{ 
+                                           py: 0.5, 
+                                           px: 0.6, 
+                                           bgcolor: 'primary.main', 
+                                           color: 'white', 
+                                           borderRadius: '4px 4px 0 0', 
+                                           display: 'none', /* hide duplicate header */
+                                           justifyContent: 'space-between', 
+                                           alignItems: 'center', 
+                                           position: 'sticky', 
+                                           top: 0, 
+                                           zIndex: 300, /* ensure always on top */
+                                           height: '39px', 
+                                           borderBottom: '2px solid rgba(255, 255, 255, 0.2)', 
+                                           boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
+                                        }}>
+                                            <Typography variant="subtitle2" fontWeight="bold" sx={{ fontSize: '0.8rem' }}>
                                                 {format(day, 'EEE, MMM d')}
                                             </Typography>
                                             {mode === 'provider' && (
@@ -1696,7 +1744,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                         '&:hover': { bgcolor: 'rgba(255,255,255,0.3)'  } 
                                                     }}
                                                 >
-                                                    <AddIcon sx={{ fontSize: '1rem'   }} />
+                                                    <AddIcon sx={{ fontSize: '1rem' }} />
                                                 </Button>
                                             )}
                                         </Box>
