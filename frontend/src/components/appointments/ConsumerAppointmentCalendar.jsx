@@ -209,6 +209,42 @@ const ConsumerAppointmentCalendar = ({
         }
     };
     
+    // Check for existing appointments that might conflict
+    const checkForConflicts = async (startTime, endTime) => {
+        try {
+            // Get the provider ID from the service
+            const providerId = service?.provider?.id;
+            if (!providerId) {
+                console.error('Cannot check conflicts: Provider ID not available');
+                return null;
+            }
+            
+            // Get all appointments for this provider's services
+            // This is a simplified check that doesn't apply the buffer time that the backend uses
+            console.log(`Checking for conflicts with provider ${providerId} at time ${startTime.toISOString()} to ${endTime.toISOString()}`);
+            
+            const response = await appointments.getByProvider(providerId);
+            console.log('Existing provider appointments:', response.data);
+            
+            // Filter for appointments that overlap with our time slot
+            const overlapping = response.data.filter(apt => {
+                if (apt.status === 'cancelled') return false; // Ignore cancelled appointments
+                
+                const aptStart = new Date(apt.start_time);
+                const aptEnd = new Date(apt.end_time);
+                
+                // Check if there's any overlap
+                return (startTime < aptEnd && endTime > aptStart);
+            });
+            
+            console.log('Potentially conflicting appointments:', overlapping);
+            return overlapping;
+        } catch (error) {
+            console.error('Error checking for conflicting appointments:', error);
+            return null;
+        }
+    };
+    
     // Handle booking confirmation
     const handleConfirmBooking = async () => {
         if (!selectedSlot || !service) return;
@@ -248,11 +284,65 @@ const ConsumerAppointmentCalendar = ({
             setBookingInProgress(true);
             setBookingError('');
             
-            console.log('Creating appointment with slot');
+            console.log('Creating appointment with slot:', selectedSlot);
             console.log('Email being submitted:', bookingData.email);
             
-            // Add the buffer time to the end time
+            // Create the appointment end time from the slot's end time
             const appointmentEndTime = new Date(selectedSlot.end);
+            
+            // Check if this slot has buffer information from the backend
+            if (selectedSlot.buffer_info) {
+                console.log('Slot includes buffer information:', selectedSlot.buffer_info);
+                
+                // Parse the buffer times
+                const bufferedStart = new Date(selectedSlot.buffer_info.buffered_start);
+                const bufferedEnd = new Date(selectedSlot.buffer_info.buffered_end);
+                
+                console.log('Using buffer information from backend:');
+                console.log(`- Actual slot time: ${selectedSlot.start.toISOString()} to ${selectedSlot.end.toISOString()}`);
+                console.log(`- Buffered time: ${bufferedStart.toISOString()} to ${bufferedEnd.toISOString()}`);
+                console.log(`- Buffer minutes: ${selectedSlot.buffer_info.buffer_minutes}`);
+                
+                // Check for potential conflicts with the buffered time values
+                const conflictingAppointments = await checkForConflicts(
+                    bufferedStart, 
+                    bufferedEnd
+                );
+                
+                if (conflictingAppointments && conflictingAppointments.length > 0) {
+                    console.warn('Potential conflicts detected with buffered times:', conflictingAppointments);
+                    
+                    // Log the details of the conflicts
+                    conflictingAppointments.forEach(conflict => {
+                        console.warn(`Conflict with appointment ${conflict.id}:`);
+                        console.warn(`- Conflict time: ${new Date(conflict.start_time).toISOString()} to ${new Date(conflict.end_time).toISOString()}`);
+                        console.warn(`- Status: ${conflict.status}`);
+                    });
+                }
+            } else {
+                console.warn('Slot does not include buffer information from backend');
+                
+                // Check for potential conflicts with non-buffered times
+                const conflictingAppointments = await checkForConflicts(
+                    selectedSlot.start, 
+                    appointmentEndTime
+                );
+                
+                // If there are conflicts, show a warning but still allow the user to proceed
+                if (conflictingAppointments && conflictingAppointments.length > 0) {
+                    console.warn('Potential conflicting appointments detected:', conflictingAppointments);
+                    
+                    // Get short times for warning message
+                    const conflictTimes = conflictingAppointments.map(conflict => {
+                        const start = new Date(conflict.start_time);
+                        const end = new Date(conflict.end_time);
+                        const status = conflict.status ? ` (${conflict.status})` : '';
+                        return `${format(start, 'h:mm a')} - ${format(end, 'h:mm a')}${status}`;
+                    }).join(', ');
+                    
+                    console.warn(`Time slots that may conflict: ${conflictTimes}`);
+                }
+            }
             
             // Create appointment request
             const appointmentData = {
@@ -261,8 +351,6 @@ const ConsumerAppointmentCalendar = ({
                 end_time: appointmentEndTime.toISOString(),
                 status: 'confirmed',
                 notes: bookingData.notes || '',
-                client_email: bookingData.email, // This must be sent
-                client_phone: bookingData.phone || '',
                 address_line1: bookingData.address_line1 || '',
                 address_line2: bookingData.address_line2 || '',
                 city: bookingData.city || '',
@@ -270,6 +358,13 @@ const ConsumerAppointmentCalendar = ({
                 zip_code: bookingData.zip_code || '',
                 country: 'United States'
             };
+            
+            // Add buffer information if available
+            if (selectedSlot.buffer_info) {
+                appointmentData.buffer_minutes = selectedSlot.buffer_info.buffer_minutes;
+                appointmentData.buffered_start = selectedSlot.buffer_info.buffered_start;
+                appointmentData.buffered_end = selectedSlot.buffer_info.buffered_end;
+            }
             
             // Add discount information if available
             if (selectedSlot.discountPercentage > 0) {
@@ -280,7 +375,7 @@ const ConsumerAppointmentCalendar = ({
                 appointmentData.discount_reason = 'Proximity discount';
             }
             
-            console.log('Sending appointment data', JSON.stringify(appointmentData));
+            console.log('Sending appointment data:', JSON.stringify(appointmentData));
             
             // Call API to create appointment
             const response = await appointments.create(appointmentData);
@@ -301,15 +396,19 @@ const ConsumerAppointmentCalendar = ({
             }, 2000);
             
         } catch (error) {
-            console.error('Error creating appointment');
+            console.error('Error creating appointment:', error);
+            console.error('Error response:', error.response?.data);
             
             // Handle conflict errors (HTTP 409)
             if (error.response && error.response.status === 409) {
                 const conflicts = error.response.data.conflict_appointments || [];
+                console.log('Conflicting appointments:', conflicts);
+                
                 const conflictTimes = conflicts.map((conflict) => {
                     const start = new Date(conflict.start_time);
                     const end = new Date(conflict.end_time);
-                    return `${format(start, 'h:mm a')} - ${format(end, 'h:mm a')}`;
+                    const status = conflict.status ? ` (${conflict.status})` : '';
+                    return `${format(start, 'h:mm a')} - ${format(end, 'h:mm a')}${status}`;
                 }).join(', ');
                 
                 if (conflictTimes) {
@@ -365,6 +464,15 @@ const ConsumerAppointmentCalendar = ({
                     title={`Available Appointments for ${service.name}`}
                 />
             )}
+            
+            {/* Buffer Time Info Alert */}
+            <Alert severity="info" sx={{ mt: 1, mb: 2 }}>
+                <Typography variant="body2">
+                    <strong>Buffer Time Policy:</strong> To ensure providers have sufficient time between appointments,
+                    a 15-minute buffer is applied before and after each booking. Available time slots already 
+                    account for this buffer time.
+                </Typography>
+            </Alert>
             
             {/* Booking Dialog */}
             <Dialog open={bookingDialogOpen} onClose={() => !bookingInProgress && setBookingDialogOpen(false)} maxWidth="sm" fullWidth>
@@ -449,6 +557,12 @@ const ConsumerAppointmentCalendar = ({
                                 
                                 <Typography variant="body2" color="text.secondary" sx={{ mt: 2, fontSize: '0.85rem', bgcolor: 'rgba(0, 0, 0, 0.03)', p: 1 }}>
                                     Duration: {service.duration} minutes
+                                </Typography>
+                                
+                                {/* Buffer time information */}
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontSize: '0.75rem', color: 'info.main' }}>
+                                    <strong>Note:</strong> A 15-minute buffer time is automatically applied before and after 
+                                    each appointment to allow for travel and preparation time.
                                 </Typography>
                             </Box>
                             

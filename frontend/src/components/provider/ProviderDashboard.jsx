@@ -415,13 +415,15 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                                                 </Box>
                                             )}
                                             {appointment.status === 'confirmed' && (
-                                                <Button
-                                                    variant="contained"
-                                                    color="success"
-                                                    onClick={() => handleStatusChange(appointment.id, 'completed')}
-                                                >
-                                                    Mark as Completed
-                                                </Button>
+                                                new Date(appointment.end_time) <= new Date() && (
+                                                    <Button
+                                                        variant="contained"
+                                                        color="success"
+                                                        onClick={() => handleStatusChange(appointment.id, 'completed')}
+                                                    >
+                                                        Mark as Completed
+                                                    </Button>
+                                                )
                                             )}
                                         </Box>
                                     </CardContent>

@@ -639,6 +639,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             boxShadow: '0 2px 8px 0 rgba(36,81,255,0.10)',
             border: '1.5px solid rgba(36,81,255,0.15)',
             overflow: 'hidden',
+            position: 'relative', // Add relative positioning for buffer indicators
         };
         
         if (appointment) {
@@ -669,12 +670,15 @@ const AppointmentCalendar = forwardRef(({ mode,
             const status = appointment.status || 'pending';
             const colors = statusColors[status] || statusColors.pending;
 
+            // Give cancelled appointments a lower z-index (2) so available slots (z-index 3) appear on top
+            const zIndexValue = status === 'cancelled' ? 2 : 4;
+
             return {
                 ...commonStyles,
                 backgroundColor: colors.bg,
                 color: colors.text,
                 border: `1.5px solid ${colors.border}`,
-                zIndex: 4, // Ensure appointments appear above availability blocks
+                zIndex: zIndexValue, // Use the determined z-index based on status
             };
         } else if (isUserAppointment) {
             return {
@@ -685,23 +689,43 @@ const AppointmentCalendar = forwardRef(({ mode,
                 zIndex: 4,
             };
         } else if (mode === 'consumer') {
-            if (block.discountPercentage > 0) {
+            // For consumer mode, show available blocks with optional buffer indication
+            const hasBuffer = block.buffer_info && block.buffer_info.has_buffer;
+            const baseStyle = {
+                ...commonStyles,
+                // Use different styles for discounted slots
+                backgroundColor: block.discountPercentage > 0 ? '#388e3c' : '#232a5c',
+                color: '#fff',
+                border: `1.5px solid ${block.discountPercentage > 0 ? '#388e3c' : '#232a5c'}`,
+                zIndex: 3,
+            };
+            
+            // If this block has buffer information, we'll indicate it
+            if (hasBuffer && mode === 'consumer') {
                 return {
-                    ...commonStyles,
-                    backgroundColor: '#388e3c',
-                    color: '#fff',
-                    border: '1.5px solid #388e3c',
-                    zIndex: 3,
-                };
-            } else {
-                return {
-                    ...commonStyles,
-                    backgroundColor: '#232a5c',
-                    color: '#fff',
-                    border: '1.5px solid #232a5c',
-                    zIndex: 3,
+                    ...baseStyle,
+                    // Add a subtle indicator for the buffer zone
+                    '&::before, &::after': {
+                        content: '""',
+                        position: 'absolute',
+                        width: '100%',
+                        height: '5px',
+                        left: 0,
+                        backgroundColor: 'rgba(255,255,255,0.2)',
+                        zIndex: 1,
+                    },
+                    // Add buffer indicator at top (before buffer)
+                    '&::before': {
+                        top: '-5px',
+                    },
+                    // Add buffer indicator at bottom (after buffer)
+                    '&::after': {
+                        bottom: '-5px',
+                    },
                 };
             }
+            
+            return baseStyle;
         } else {
             // Provider mode (availability blocks)
             if (block.discountPercentage > 0) {
@@ -1167,7 +1191,6 @@ const AppointmentCalendar = forwardRef(({ mode,
                             position: 'absolute',
                             top: `${top}px`,
                             height: `${height}px`,
-                            zIndex: 4,
                             width: mode === 'provider' ? 'calc(100% - 16px)' : 'calc(100% - 8px)',
                             left: mode === 'provider' ? '8px' : '4px',
                             minHeight: '32px',
@@ -2154,7 +2177,8 @@ const AppointmentCalendar = forwardRef(({ mode,
                             </Button>
                         )}
                         
-                        {mode === 'provider' && selectedAppointment?.status === 'confirmed' && (
+                        {mode === 'provider' && selectedAppointment?.status === 'confirmed' && 
+                         selectedAppointment?.end_time && new Date(selectedAppointment.end_time) <= new Date() && (
                             <Button
                                 onClick={() => handleStatusChange('completed')}
                                 variant="contained"

@@ -147,14 +147,16 @@ const AppointmentList = () => {
                             )}
 
                             {userType === 'provider' && appointment.status === 'confirmed' && (
-                                <Button
-                                    variant="contained"
-                                    color="primary"
-                                    onClick={() => handleStatusUpdate(appointment.id, 'completed')}
-                                    sx={{ mt: 2 }}
-                                >
-                                    Mark as Completed
-                                </Button>
+                                new Date(appointment.end_time) <= new Date() && (
+                                    <Button
+                                        variant="contained"
+                                        color="primary"
+                                        onClick={() => handleStatusUpdate(appointment.id, 'completed')}
+                                        sx={{ mt: 2 }}
+                                    >
+                                        Mark as Completed
+                                    </Button>
+                                )
                             )}
                         </CardContent>
                     </Card>
