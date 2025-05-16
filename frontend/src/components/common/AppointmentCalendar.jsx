@@ -118,21 +118,21 @@ const AppointmentCalendar = forwardRef(({ mode,
             console.log('User appointments loaded:', result.data.length, 'appointments');
             if (result.data && result.data.length > 0) {
                 console.log('First appointment:', result.data[0]);
+                // Check for cancelled appointments
+                const cancelledAppointments = result.data.filter(a => a.status === 'cancelled');
+                console.log('Cancelled appointments in API response:', cancelledAppointments.length);
+                if (cancelledAppointments.length > 0) {
+                    console.log('First cancelled appointment:', cancelledAppointments[0]);
+                }
             }
             
             // Update state, but only if data actually changed
             if (Array.isArray(result.data)) {
-                // Check if the appointments have actually changed to avoid unnecessary rerenders
-                const existingIds = new Set(userAppointments.map(a => a.id));
+                // NEVER filter out cancelled appointments - we need to keep them for display
                 const newAppointments = result.data;
                 
-                // Check if any appointments were added or removed
-                const hasChanges = newAppointments.length !== userAppointments.length || 
-                    newAppointments.some(newAppt => !existingIds.has(newAppt.id));
-                
-                if (hasChanges) {
-                    setUserAppointments(newAppointments);
-                }
+                // Update the state with the new data to ensure cancelled appointments are included
+                setUserAppointments(newAppointments);
             }
             
             return result.data;
@@ -551,7 +551,7 @@ const AppointmentCalendar = forwardRef(({ mode,
     // Update the getAppointmentsForDay function to be more robust
     const getAppointmentsForDay = (day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
-        console.log('Getting appointments for day:', dateStr);
+        console.log(`Getting appointments for day ${dateStr} (force counter: ${forceUpdate})`);
         console.log('Current appointments:', appointments);
         console.log('Current userAppointments:', userAppointments);
         
@@ -566,13 +566,20 @@ const AppointmentCalendar = forwardRef(({ mode,
             }
         });
         
-        // Filter for the current day
+        // Filter for the current day, but keep ALL statuses including cancelled
         const dayAppointments = allAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
-            return appointmentDate === dateStr;
+            const matchesDay = appointmentDate === dateStr;
+            
+            if (appointment.status === 'cancelled' && matchesDay) {
+                console.log(`Found cancelled appointment ${appointment.id} for day ${dateStr}`);
+            }
+            
+            return matchesDay;
         });
         
         console.log('Filtered appointments for day:', dayAppointments);
+        console.log('Cancelled appointments for day:', dayAppointments.filter(a => a.status === 'cancelled').length);
         return dayAppointments;
     };
     
@@ -685,8 +692,8 @@ const AppointmentCalendar = forwardRef(({ mode,
             const colors = statusColors[status] || statusColors.pending;
 
             // For cancelled appointments - make them visible but with a lower z-index
-            // Make sure the z-index is higher than availability blocks (which are at 3)
-            const zIndexValue = status === 'cancelled' ? 3 : 4;
+            // Make sure the z-index is lower than availability blocks in consumer mode
+            const zIndexValue = status === 'cancelled' ? 1 : 4;
 
             return {
                 ...commonStyles,
@@ -713,7 +720,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 backgroundColor: block.discountPercentage > 0 ? '#388e3c' : '#232a5c',
                 color: '#fff',
                 border: `1.5px solid ${block.discountPercentage > 0 ? '#388e3c' : '#232a5c'}`,
-                zIndex: 3,
+                zIndex: 5, // Higher than cancelled appointments (z-index 2) and normal appointments (z-index 4)
             };
             
             // If this block has buffer information, we'll indicate it
@@ -867,12 +874,32 @@ const AppointmentCalendar = forwardRef(({ mode,
             // Force re-render by incrementing the counter
             setForceUpdate(prev => prev + 1);
             
+            // Update appointment in the local state if it exists there
+            setUserAppointments(prev => 
+                prev.map(apt => 
+                    apt.id === appointmentId 
+                        ? { ...apt, status: 'cancelled' } 
+                        : apt
+                )
+            );
+            
             // Immediately fetch updated data
             try {
-                await Promise.all([
+                console.log('Refreshing data after cancellation');
+                const [updatedAppointments] = await Promise.all([
                     fetchUserAppointments(),
                     serviceId && fetchServiceAvailability(serviceId)
                 ]);
+                
+                // Make sure we directly update the userAppointments state with the new data
+                if (updatedAppointments && updatedAppointments.length > 0) {
+                    console.log('Received updated appointments after cancellation:', updatedAppointments.length);
+                    console.log('Cancelled appointments in new data:', updatedAppointments.filter(a => a.status === 'cancelled').length);
+                    setUserAppointments(updatedAppointments);
+                }
+                
+                // Force another re-render
+                setForceUpdate(prev => prev + 1);
             } catch (refreshErr) {
                 console.error('Error refreshing data after cancellation:', refreshErr);
             }
@@ -884,10 +911,19 @@ const AppointmentCalendar = forwardRef(({ mode,
                 
                 // Refresh data again after closing to ensure UI is updated
                 try {
-                    await Promise.all([
+                    console.log('Refreshing data after modal close');
+                    const [updatedAppointments] = await Promise.all([
                         fetchUserAppointments(),
                         serviceId && fetchServiceAvailability(serviceId)
                     ]);
+                    
+                    // Direct state update
+                    if (updatedAppointments && updatedAppointments.length > 0) {
+                        console.log('Final appointments update received:', updatedAppointments.length);
+                        console.log('Cancelled appointments in final data:', updatedAppointments.filter(a => a.status === 'cancelled').length);
+                        setUserAppointments(updatedAppointments);
+                    }
+                    
                     // Force re-render again
                     setForceUpdate(prev => prev + 1);
                 } catch (refreshErr) {
@@ -1229,11 +1265,11 @@ const AppointmentCalendar = forwardRef(({ mode,
             .filter(apt => {
                 const aptStart = new Date(apt.start_time);
                 const aptEnd = new Date(apt.end_time);
+                // Only filter by time overlap, not by status - we want to show ALL appointments including cancelled ones
                 const overlaps = areIntervalsOverlapping({ start: aptStart, end: aptEnd }, { start: hourStart, end: hourEnd });
                 
-                // Debug log to check if cancelled appointments are being filtered out
                 if (apt.status === 'cancelled') {
-                    console.log(`Cancelled appointment ${apt.id} overlaps with hour ${hour}:`, overlaps);
+                    console.log(`Cancelled appointment ${apt.id} overlaps with hour ${hour}:`, overlaps, 'on day:', format(day, 'yyyy-MM-dd'));
                 }
                 
                 return overlaps;
@@ -1673,6 +1709,59 @@ const AppointmentCalendar = forwardRef(({ mode,
         }
     }, [forceUpdate]);
 
+    // Add an effect to refresh data when forceUpdate changes
+    useEffect(() => {
+        if (forceUpdate > 0) {
+            console.log(`AppointmentCalendar: forceUpdate triggered (${forceUpdate}), refreshing data`);
+            
+            // Refresh appointments based on mode
+            if (mode === 'consumer') {
+                // For consumer view, fetch appointments
+                fetchUserAppointments().then(appointments => {
+                    console.log('Appointments refreshed via forceUpdate:', appointments?.length || 0);
+                });
+                
+                // Also refresh availability if we have a service ID
+                if (serviceId) {
+                    fetchServiceAvailability(serviceId).then(() => {
+                        console.log('Service availability refreshed via forceUpdate');
+                    });
+                }
+            } else if (mode === 'provider' && providerId) {
+                // For provider view, fetch provider appointments and availability
+                Promise.all([
+                    fetchProviderAppointments(),
+                    fetchProviderAvailability(providerId)
+                ]).then(() => {
+                    console.log('Provider data refreshed via forceUpdate');
+                });
+            }
+        }
+    }, [forceUpdate, mode, providerId, serviceId]);
+
+    // Add a specific effect to refresh data when forceUpdate changes for cancelled appointments
+    useEffect(() => {
+        if (forceUpdate > 0) {
+            console.log(`AppointmentCalendar: forceUpdate triggered (${forceUpdate}), refreshing data with focus on cancelled appointments`);
+            
+            // For consumer view, focus on ensuring cancelled appointments are still displayed
+            if (mode === 'consumer') {
+                fetchUserAppointments().then(appointments => {
+                    if (appointments) {
+                        console.log('Refreshed appointments with forceUpdate:', appointments.length);
+                        console.log('Including cancelled appointments:', appointments.filter(a => a.status === 'cancelled').length);
+                        
+                        // Extra check to ensure we're keeping cancelled appointments in state
+                        const cancelledAppointments = appointments.filter(a => a.status === 'cancelled');
+                        if (cancelledAppointments.length > 0) {
+                            console.log('First cancelled appointment:', cancelledAppointments[0]);
+                        }
+                    }
+                });
+            }
+        }
+    }, [forceUpdate, mode, fetchUserAppointments]);
+
     if (loading && Object.keys(timeBlocks).length === 0) {
         return (
             <Box display="flex" justifyContent="center" alignItems="center" height="400px">
@@ -1694,6 +1783,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             overflow: 'hidden',
             mr: 0,
             minHeight: '580px', // Add a minimum height to ensure proper display
+            key: `appointment-calendar-${forceUpdate}` // Add key to force re-render when forceUpdate changes
         }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 {/* Only show title if we're in provider mode or no service is provided */}
@@ -2016,17 +2106,14 @@ const AppointmentCalendar = forwardRef(({ mode,
             
             {mode === 'consumer' && (
                 <Box sx={{ mt: 2, px: 2 }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                        Each appointment includes a 15-minute buffer time afterward to prevent back-to-back bookings.
-                    </Typography>
                     <Box sx={{ display: 'flex', mt: 2, gap: 2, flexWrap: 'wrap' }}>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                             <Box component="span" sx={{ width: 12, 
                                 height: 12, 
-                                backgroundColor: '#e3f2fd', 
+                                backgroundColor: '#232a5c', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #90caf9' 
+                                border: '1px solid #232a5c' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Available Slots
@@ -2035,10 +2122,10 @@ const AppointmentCalendar = forwardRef(({ mode,
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                             <Box component="span" sx={{ width: 12, 
                                 height: 12, 
-                                backgroundColor: '#e8f5e9', 
+                                backgroundColor: '#388e3c', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #a5d6a7' 
+                                border: '1px solid #388e3c' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Discounted Slots
@@ -2053,7 +2140,19 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 border: '1px solid #c3e6cb' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                                Your Booked Appointments
+                                Confirmed Appointments
+                            </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box component="span" sx={{ width: 12, 
+                                height: 12, 
+                                backgroundColor: '#f8d7da', 
+                                display: 'inline-block', 
+                                mr: 1, 
+                                border: '1px solid #f5c6cb' 
+                              }}></Box>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                                Cancelled Appointments
                             </Typography>
                         </Box>
                     </Box>
