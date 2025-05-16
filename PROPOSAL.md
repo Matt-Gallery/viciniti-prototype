@@ -70,16 +70,16 @@ The purpose of the application is to make the delivery of products and services 
 
 ## Wire Frames
 
-![Page2](./public/images/f1.png)
-![Page1](./public/images/f2.png)
-![Pricing](./public/images/pricematrix.png)
+![Page2](./frontend/public/images/f1.png)
+![Page1](./frontend/public/images/f2.png)
+![Pricing](./frontend/public/images/pricematrix.png)
 
 ## Component Hierarchy Diagram
-![Component Hierarchy Diagram](./public/images/component.png)
+![Component Hierarchy Diagram](./frontend/public/images/component.png)
 
 ## Entity Relationship Diagram (ERD)
 
-![ERD](./public/images/ERD.png)
+![ERD](./frontend/public/images/ERD.png)
 
 ## Timeline
 
