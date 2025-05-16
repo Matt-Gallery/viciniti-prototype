@@ -116,7 +116,9 @@ const Layout = ({ children }) => {
                     </Box>
                 </Toolbar>
             </AppBar>
-            <Container sx={{ mt: 4 }}>{children}</Container>
+            <Container maxWidth={false} disableGutters sx={{ mt: 4, ml: '100px', pr: 0 }}>
+                {children}
+            </Container>
         </>
     );
 };

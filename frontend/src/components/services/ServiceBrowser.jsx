@@ -321,13 +321,13 @@ const ServiceBrowser = () => {
             width: '100%',
             maxWidth: '100%',
             mx: 0,
-            px: 2
+            px: 0
         }}>
-            <Typography variant="h4" gutterBottom sx={{ ml: 2 }}>
+            <Typography variant="h4" gutterBottom sx={{ ml: 1 }}>
                 Browse Services
             </Typography>
             {error && (
-                <Alert severity="error" sx={{ mb: 2, ml: 2 }}>
+                <Alert severity="error" sx={{ mb: 2, ml: 1 }}>
                     {error}
                 </Alert>
             )}
@@ -340,7 +340,7 @@ const ServiceBrowser = () => {
                         overflow: 'auto',
                         flexShrink: 0,
                         borderRight: '1px solid rgba(0, 0, 0, 0.12)',
-                        ml: 2
+                        ml: 1
                     }}
                 >
                     <List sx={{ py: 1 }}>
@@ -392,12 +392,11 @@ const ServiceBrowser = () => {
                 {/* Third Column - Service Details */}
                 <Box sx={{ 
                     flexGrow: 1, 
-                    p: 2, 
-                    overflow: 'auto', 
-                    width: '98%',
+                    p: 1, 
+                    overflow: 'visible', // let the calendar expand without being clipped
                     minWidth: '300px',
-                    pr: 2,
-                    mr: 2
+                    pr: 0,
+                    mr: 0
                 }}>
                     {selectedSubCategory ? (
                         filteredServices.length > 0 ? (
@@ -407,8 +406,8 @@ const ServiceBrowser = () => {
                                 </Typography>
                                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
                                     {filteredServices.map(service => (
-                                        <Box key={service.id} sx={{ width: '100%' }}>
-                                            <Paper sx={{ p: 2, mb: 2, width: '100%' }}>
+                                        <Box key={service.id} sx={{ width: 'max-content' }}>
+                                            <Paper sx={{ p: 2, pr: 5.75, pb: 5.75, mb: 2, width: 'max-content' }}>
                                                 <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
                                                     <Box sx={{ mb: 2 }}>
                                                         <Typography variant="h6" sx={{ fontSize: '1.1rem' }}>
@@ -434,7 +433,11 @@ const ServiceBrowser = () => {
                                                     <Typography variant="subtitle1" sx={{ mb: 1, mt: 1 }}>
                                                         Available Appointments
                                                     </Typography>
-                                                    <Box sx={{ height: '450px', width: '100%', overflow: 'hidden' }}>
+                                                    <Box sx={{ 
+                                                        height: '630px', /* 450 + 180 for extra bottom space */
+                                                        width: '100%', 
+                                                        overflow: 'visible' 
+                                                    }}>
                                                         <AppointmentCalendar
                                                             ref={el => calendarRefs.current[service.id] = el}
                                                             mode="consumer"
@@ -494,10 +497,10 @@ const ServiceBrowser = () => {
                             {selectedSlot && selectedSlot.discountPercentage > 0 ? (
                                 <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                                     <Typography variant="body2" color="text.secondary">
-                                        Original price: <span style={{ textDecoration: 'line-through' }}>${selectedSlot.originalPrice}</span>
+                                        Original price: <span style={{ textDecoration: 'line-through' }}>${selectedSlot?.originalPrice}</span>
                                     </Typography>
                                     <Typography variant="body1" color="success.main" fontWeight="bold">
-                                        Final price: ${selectedSlot.discountedPrice} ({selectedSlot.discountPercentage}% discount)
+                                        Final price: ${selectedSlot?.discountedPrice} ({selectedSlot.discountPercentage}% discount)
                                     </Typography>
                                 </Box>
                             ) : (
@@ -536,13 +539,13 @@ const ServiceBrowser = () => {
                                         flexWrap: 'wrap'
                                     }}>
                                         <Typography variant="body2" color="text.secondary" sx={{ textDecoration: 'line-through' }}>
-                                            ${selectedSlot.originalPrice}
+                                            ${selectedSlot?.originalPrice}
                                         </Typography>
                                         <Typography variant="caption" sx={{ color: 'success.main' }}>
                                             -{selectedSlot.discountPercentage}%
                                         </Typography>
                                         <Typography variant="body2" color="success.main" sx={{ fontWeight: 'bold' }}>
-                                            ${selectedSlot.discountedPrice}
+                                            ${selectedSlot?.discountedPrice}
                                         </Typography>
                                         <Typography variant="caption" color="text.secondary" sx={{ width: '100%', mt: 0.5, display: 'block' }}>
                                             Discount applied based on proximity to other appointments
@@ -551,8 +554,8 @@ const ServiceBrowser = () => {
                                 ) : (
                                     <Box sx={{ mt: 1 }}>
                                         {(() => {
-                                            const orig = Number(selectedSlot.originalPrice ?? selectedService?.price);
-                                            const discRaw = selectedSlot.discountedPrice;
+                                            const orig = Number(selectedSlot?.originalPrice ?? selectedService?.price);
+                                            const discRaw = selectedSlot?.discountedPrice;
                                             const disc = discRaw !== undefined && discRaw !== null ? Number(discRaw) : orig;
                                             const useDiscount = disc < orig;
                                             return (
