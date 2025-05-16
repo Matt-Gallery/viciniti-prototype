@@ -425,7 +425,7 @@ const ServiceBrowser = () => {
                                                                     Duration: {service.duration} minutes
                                                                 </Typography>
                                                                 <Typography variant="body2" fontWeight="bold" color="primary.main">
-                                                                    ${service.price}
+                                                                    Base Price: ${service.price}
                                                                 </Typography>
                                                             </Box>
                                                         </Box>

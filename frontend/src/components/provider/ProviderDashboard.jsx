@@ -24,6 +24,7 @@ import { Box,
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { services as servicesApi, appointments as appointmentsApi, availability as availabilityApi } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import ProviderAvailabilityCalendar from './ProviderAvailabilityCalendar';
@@ -48,6 +49,15 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
     const [availabilityView, setAvailabilityView] = useState(true);
     const [providerId, setProviderId] = useState(null);
     const [availabilityData, setAvailabilityData] = useState({});
+    // Status update state
+    const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+    const [statusInProgress, setStatusInProgress] = useState(false);
+    const [statusSuccess, setStatusSuccess] = useState(false);
+    const [updatedStatus, setUpdatedStatus] = useState('');
+    const [selectedAppointment, setSelectedAppointment] = useState(null);
+    // Add a refresh counter to force re-renders
+    const [refreshCounter, setRefreshCounter] = useState(0);
+    
     const navigate = useNavigate();
 
     useEffect(() => { fetchData();
@@ -124,10 +134,47 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
 
     const handleStatusChange = async (appointmentId, status) => {
         try {
+            setStatusInProgress(true);
+            // Find the appointment to display details in the confirmation
+            const appointment = appointmentList.find(a => a.id === appointmentId);
+            setSelectedAppointment(appointment);
+            setUpdatedStatus(status);
+            
+            // Update the status through the API
             await appointmentsApi.updateStatus(appointmentId, status);
-            fetchData(); // Refresh data
+            
+            // Show the confirmation dialog
+            setStatusSuccess(true);
+            setStatusDialogOpen(true);
+            
+            // First refresh data in the background
+            await fetchData();
+            
+            // Increment refresh counter to force re-render of child components
+            setRefreshCounter(prev => prev + 1);
+            
+            // Auto-close after 2 seconds and ensure data is refreshed
+            setTimeout(async () => {
+                setStatusDialogOpen(false);
+                setStatusSuccess(false);
+                setStatusInProgress(false);
+                setSelectedAppointment(null);
+                
+                // Refresh data again to ensure latest state is reflected in the UI
+                await fetchData();
+                
+                // If provider ID is available, refresh availability data too
+                if (providerId) {
+                    await fetchAvailabilityData(providerId);
+                }
+                
+                // Increment refresh counter again to ensure UI updates
+                setRefreshCounter(prev => prev + 1);
+            }, 2000);
         } catch (err) {
+            console.error('Failed to update appointment status:', err);
             setError('Failed to update appointment status');
+            setStatusInProgress(false);
         }
     };
 
@@ -365,6 +412,7 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                             </Box>
                         ) : (
                             <ProviderAvailabilityCalendar 
+                                key={`availability-calendar-${refreshCounter}`}
                                 onAvailabilityChange={handleAvailabilityChange}
                                 providerId={providerId || undefined}
                                 initialTimeBlocks={availabilityData} 
@@ -377,7 +425,7 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                 <Stack spacing={ 3 }>
                     { appointmentList.length > 0 ? (
                         appointmentList.map((appointment) => (
-                            <Box key={appointment.id}>
+                            <Box key={`appointment-${appointment.id}-${appointment.status}-${refreshCounter}`}>
                                 <Card>
                                     <CardContent>
                                         <Typography variant="h6" gutterBottom>
@@ -415,13 +463,15 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                                                 </Box>
                                             )}
                                             {appointment.status === 'confirmed' && (
-                                                <Button
-                                                    variant="contained"
-                                                    color="success"
-                                                    onClick={() => handleStatusChange(appointment.id, 'completed')}
-                                                >
-                                                    Mark as Completed
-                                                </Button>
+                                                new Date(appointment.end_time) <= new Date() && (
+                                                    <Button
+                                                        variant="contained"
+                                                        color="success"
+                                                        onClick={() => handleStatusChange(appointment.id, 'completed')}
+                                                    >
+                                                        Mark as Completed
+                                                    </Button>
+                                                )
                                             )}
                                         </Box>
                                     </CardContent>
@@ -469,6 +519,33 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                         { deleteLoading ? <CircularProgress size={24 } /> : 'Delete'}
                     </Button>
                 </DialogActions>
+            </Dialog>
+
+            {/* Status Update Confirmation Dialog */}
+            <Dialog
+                open={ statusDialogOpen }
+                onClose={() => !statusInProgress && setStatusDialogOpen(false)}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>
+                    Appointment Status Updated
+                </DialogTitle>
+                <DialogContent sx={{ pl: 4, pr: 2 }}>
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                        <CheckCircleIcon color="success" sx={{ fontSize: '3rem', mb: 2 }} />
+                        <Typography variant="h6" gutterBottom>
+                            {updatedStatus === 'confirmed' 
+                                ? "The appointment has been confirmed successfully!" 
+                                : updatedStatus === 'cancelled'
+                                ? "The appointment has been cancelled successfully!"
+                                : updatedStatus === 'completed'
+                                ? "The appointment has been marked as completed!"
+                                : "The appointment status has been updated successfully!"}
+                        </Typography>
+                    </Box>
+                </DialogContent>
+                {/* No buttons in the confirmation dialog as per requirement */}
             </Dialog>
         </Box>
     );

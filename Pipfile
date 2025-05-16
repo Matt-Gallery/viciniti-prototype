@@ -14,6 +14,8 @@ python-dotenv = "*"
 whitenoise = "*"
 gunicorn = "*"
 dj-database-url = "*"
+bleach = "*"
+geopy = "*"
 
 [dev-packages]
 

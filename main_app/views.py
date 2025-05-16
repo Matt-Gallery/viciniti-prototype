@@ -1,21 +1,41 @@
 from django.shortcuts import render, redirect
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status as http_status
-from django.contrib.auth import login, authenticate
-from django.contrib.auth.decorators import login_required
-from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
-from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.urls import reverse_lazy
-from .models import User, Service, ServiceProvider, Appointment, ProviderAvailability, ProximityDiscountConfig
-from .forms import UserRegistrationForm, ServiceProviderForm, ServiceForm, AppointmentForm
-from rest_framework.authtoken.models import Token
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.views.generic.edit import CreateView
+from django.utils import timezone
+from django.db.models import Q
+from django.utils.dateparse import parse_datetime
+from django.core.serializers.json import DjangoJSONEncoder
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.utils import timezone
-import datetime
+import json
 import uuid
+import datetime
+import random
+import string
+import bleach
+import re
+from urllib.parse import urlencode
+from django.contrib.gis.geos import GEOSGeometry, Point
+from django.contrib.gis.db.models.functions import Distance
+from django.views.generic import ListView
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.authtoken.models import Token
+from rest_framework import status as http_status
+from rest_framework.permissions import BasePermission
+
+from django.views.generic.list import ListView
+from .models import User, ServiceProvider, Service, Appointment, ProviderAvailability
+from .forms import UserRegistrationForm, ServiceProviderForm, ServiceForm, AppointmentForm
+
+# Define a global constant for buffer time in minutes
+# This ensures consistent buffer time across all functions
+BUFFER_MINUTES = 15
 
 # For parsing ISO format datetimes
 from dateutil.parser import parse as parse_datetime
@@ -789,8 +809,14 @@ class PasswordChangeAPI(APIView):
         try:
             validate_password(new_password, user)
         except ValidationError as e:
+            # Convert the validation error (can be a list or string) to a string message
+            if hasattr(e, 'messages'):
+                error_message = ', '.join(e.messages)
+            else:
+                error_message = str(e)
+                
             return Response({
-                'error': str(e)
+                'error': error_message
             }, http_status.HTTP_400_BAD_REQUEST)
         
         # Set new password
@@ -1064,7 +1090,7 @@ class ServiceAvailabilityAPI(APIView):
                 print(f"DEBUG AVAILABILITY: Existing appointment: {appt.service.name} - {appt.start_time} to {appt.end_time}")
             
             # Buffer time in minutes to add to both sides of appointments
-            buffer_minutes = 15
+            buffer_minutes = BUFFER_MINUTES
             
             # Create buffered time blocks for existing appointments
             blocked_periods = []
@@ -1104,6 +1130,59 @@ class ServiceAvailabilityAPI(APIView):
                     # Create available time blocks
                     start_time = avail.start_time
                     end_time = avail.end_time
+                    
+                    # For current day, adjust start_time if it's in the past or within the buffer period
+                    if i == 0:  # Today
+                        # Calculate minimum start time (now + 1 hour)
+                        now_plus_hour = timezone.now() + timezone.timedelta(hours=1)
+                        min_time = now_plus_hour.time()
+                        
+                        # Make sure we're comparing time objects to time objects
+                        start_time_value = start_time
+                        if isinstance(start_time, datetime.datetime):
+                            start_time_value = start_time.time()
+                        
+                        # If availability starts before the minimum time, adjust it
+                        if start_time_value < min_time:
+                            print(f"DEBUG AVAILABILITY: Adjusting today's availability from {start_time} to {min_time}")
+                            # Convert min_time (a time object) to a datetime object with the same date as end_time
+                            if isinstance(start_time, datetime.datetime) and isinstance(min_time, datetime.time):
+                                min_datetime = datetime.datetime.combine(
+                                    start_time.date(),
+                                    min_time,
+                                    tzinfo=timezone.get_current_timezone()
+                                )
+                                start_time = min_datetime
+                            else:
+                                start_time = min_time
+                        
+                        # If the entire availability block is now invalid, skip it
+                        # Ensure both are the same type before comparison
+                        if isinstance(start_time, datetime.time) and isinstance(end_time, datetime.datetime):
+                            # Convert start_time to datetime for comparison
+                            start_datetime = datetime.datetime.combine(
+                                end_time.date(),
+                                start_time,
+                                tzinfo=timezone.get_current_timezone()
+                            )
+                            if start_datetime >= end_time:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                        elif isinstance(start_time, datetime.datetime) and isinstance(end_time, datetime.time):
+                            # Convert end_time to datetime for comparison
+                            end_datetime = datetime.datetime.combine(
+                                start_time.date(),
+                                end_time,
+                                tzinfo=timezone.get_current_timezone()
+                            )
+                            if start_time >= end_datetime:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                        else:
+                            # Both are the same type, can compare directly
+                            if start_time >= end_time:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
                     
                     # Calculate how many service slots fit in this availability block
                     duration_minutes = service.duration
@@ -1159,7 +1238,7 @@ class ServiceAvailabilityAPI(APIView):
                         # Move to the next potential slot - add duration PLUS buffer time for spacing between slots
                         # This ensures each appointment has buffer time on both sides
                         slot_index += 1
-                        current_start = current_start + timezone.timedelta(minutes=duration_minutes + buffer_minutes)
+                        current_start = current_start + timezone.timedelta(minutes=duration_minutes + BUFFER_MINUTES)
                     
                     # Add valid slots to the output for this date
                     for slot in available_slots:
@@ -1226,7 +1305,7 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
             print(f"DEBUG DISCOUNT: Found {existing_appointments.count()} existing appointments")
             
             # Buffer time in minutes to add to both sides of appointments
-            buffer_minutes = 15
+            buffer_minutes = BUFFER_MINUTES
             
             # Create buffered time blocks for existing appointments
             blocked_periods = []
@@ -1310,6 +1389,59 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                     start_time = avail.start_time
                     end_time = avail.end_time
                     
+                    # For current day, adjust start_time if it's in the past or within the buffer period
+                    if i == 0:  # Today
+                        # Calculate minimum start time (now + 1 hour)
+                        now_plus_hour = timezone.now() + timezone.timedelta(hours=1)
+                        min_time = now_plus_hour.time()
+                        
+                        # Make sure we're comparing time objects to time objects
+                        start_time_value = start_time
+                        if isinstance(start_time, datetime.datetime):
+                            start_time_value = start_time.time()
+                        
+                        # If availability starts before the minimum time, adjust it
+                        if start_time_value < min_time:
+                            print(f"DEBUG AVAILABILITY: Adjusting today's availability from {start_time} to {min_time}")
+                            # Convert min_time (a time object) to a datetime object with the same date as end_time
+                            if isinstance(start_time, datetime.datetime) and isinstance(min_time, datetime.time):
+                                min_datetime = datetime.datetime.combine(
+                                    start_time.date(),
+                                    min_time,
+                                    tzinfo=timezone.get_current_timezone()
+                                )
+                                start_time = min_datetime
+                            else:
+                                start_time = min_time
+                        
+                        # If the entire availability block is now invalid, skip it
+                        # Ensure both are the same type before comparison
+                        if isinstance(start_time, datetime.time) and isinstance(end_time, datetime.datetime):
+                            # Convert start_time to datetime for comparison
+                            start_datetime = datetime.datetime.combine(
+                                end_time.date(),
+                                start_time,
+                                tzinfo=timezone.get_current_timezone()
+                            )
+                            if start_datetime >= end_time:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                        elif isinstance(start_time, datetime.datetime) and isinstance(end_time, datetime.time):
+                            # Convert end_time to datetime for comparison
+                            end_datetime = datetime.datetime.combine(
+                                start_time.date(),
+                                end_time,
+                                tzinfo=timezone.get_current_timezone()
+                            )
+                            if start_time >= end_datetime:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                        else:
+                            # Both are the same type, can compare directly
+                            if start_time >= end_time:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                    
                     # Calculate how many service slots fit in this availability block
                     duration_minutes = service.duration
                     
@@ -1338,6 +1470,13 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                             'duration': duration_minutes,
                             'original_price': float(service.price),
                             'discount_percentage': 0,
+                            # Include buffer information so the frontend knows about buffer zones
+                            'buffer_info': {
+                                'buffer_minutes': buffer_minutes,
+                                'buffered_start': (current_start - timezone.timedelta(minutes=buffer_minutes)).isoformat(),
+                                'buffered_end': (current_end + timezone.timedelta(minutes=buffer_minutes)).isoformat(),
+                                'has_buffer': True
+                            },
                             'discounted_price': float(service.price)
                         }
                         
@@ -1427,7 +1566,7 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                         # Move to the next potential slot - add duration PLUS buffer time for spacing between slots
                         # This ensures each appointment has buffer time on both sides
                         slot_index += 1
-                        current_start = current_start + timezone.timedelta(minutes=duration_minutes + buffer_minutes)
+                        current_start = current_start + timezone.timedelta(minutes=duration_minutes + BUFFER_MINUTES)
                     
                     # Add available slots to the time block for this date
                     for slot in available_slots:
@@ -1439,7 +1578,8 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                             'duration': slot['duration'],
                             'original_price': slot['original_price'],
                             'discount_percentage': slot['discount_percentage'],
-                            'discounted_price': slot['discounted_price']
+                            'discounted_price': slot['discounted_price'],
+                            'buffer_info': slot['buffer_info']
                         }
                         date_availability[date_str].append(new_slot)
             
@@ -1550,11 +1690,25 @@ class AppointmentListAPI(APIView):
             start_dt = parse_datetime(start_time) if isinstance(start_time, str) else start_time
             end_dt = parse_datetime(end_time) if isinstance(end_time, str) else end_time
             
-            # Apply buffer time for conflict detection
-            buffer_minutes = 15
-            buffered_start = start_dt - timezone.timedelta(minutes=buffer_minutes)
-            buffered_end = end_dt + timezone.timedelta(minutes=buffer_minutes)
+            # Check if the request includes buffer information
+            buffered_start_str = request.data.get('buffered_start')
+            buffered_end_str = request.data.get('buffered_end')
+            requested_buffer_minutes = request.data.get('buffer_minutes')
             
+            # Apply buffer time for conflict detection
+            buffer_minutes = requested_buffer_minutes or BUFFER_MINUTES
+            
+            # Use provided buffered times if available, otherwise calculate them
+            if buffered_start_str and buffered_end_str:
+                buffered_start = parse_datetime(buffered_start_str)
+                buffered_end = parse_datetime(buffered_end_str)
+                print(f"DEBUG APPOINTMENT: Using provided buffer times: {buffered_start} to {buffered_end}")
+            else:
+                # Apply the buffer minutes to calculate buffered times
+                buffered_start = start_dt - timezone.timedelta(minutes=buffer_minutes)
+                buffered_end = end_dt + timezone.timedelta(minutes=buffer_minutes)
+                print(f"DEBUG APPOINTMENT: Calculated buffer times using {buffer_minutes} minutes")
+                
             print(f"DEBUG APPOINTMENT: Checking conflicts for time range {start_dt} to {end_dt}")
             print(f"DEBUG APPOINTMENT: With buffer: {buffered_start} to {buffered_end}")
             
@@ -1565,6 +1719,8 @@ class AppointmentListAPI(APIView):
             ).exclude(status='cancelled')
             
             print(f"DEBUG APPOINTMENT: Found {overlapping_appointments.count()} potential conflicts")
+            print(f"DEBUG APPOINTMENT: Requested booking time: {start_dt} to {end_dt}")
+            print(f"DEBUG APPOINTMENT: With buffer applied: {buffered_start} to {buffered_end}")
             
             conflicts = []
             for appt in overlapping_appointments:
@@ -1575,10 +1731,33 @@ class AppointmentListAPI(APIView):
                 print(f"  - Original time: {appt.start_time} to {appt.end_time}")
                 print(f"  - Buffered time: {appt_buffered_start} to {appt_buffered_end}")
                 
+                # Calculate if there's any overlap and explain why
+                has_overlap = (start_dt < appt_buffered_end and end_dt > appt_buffered_start)
+                
+                print(f"  - Comparison results:")
+                print(f"    - start_dt < appt_buffered_end: {start_dt} < {appt_buffered_end} = {start_dt < appt_buffered_end}")
+                print(f"    - end_dt > appt_buffered_start: {end_dt} > {appt_buffered_start} = {end_dt > appt_buffered_start}")
+                print(f"    - Overall overlap: {has_overlap}")
+                
                 # Check if there's any overlap
-                if (start_dt < appt_buffered_end and end_dt > appt_buffered_start):
+                if has_overlap:
                     conflicts.append(appt)
                     print(f"DEBUG APPOINTMENT: Found conflict with appointment {appt.id}")
+                    
+                    # Calculate the exact overlap amount
+                    overlap_start = max(start_dt, appt_buffered_start)
+                    overlap_end = min(end_dt, appt_buffered_end)
+                    overlap_minutes = (overlap_end - overlap_start).total_seconds() / 60
+                    print(f"  - Overlap details: {overlap_start} to {overlap_end} ({overlap_minutes:.2f} minutes)")
+                else:
+                    print(f"DEBUG APPOINTMENT: No conflict with appointment {appt.id}")
+                    # Calculate the gap between appointments (if any)
+                    if start_dt >= appt_buffered_end:
+                        gap_minutes = (start_dt - appt_buffered_end).total_seconds() / 60
+                        print(f"  - Gap after existing appointment: {gap_minutes:.2f} minutes")
+                    elif end_dt <= appt_buffered_start:
+                        gap_minutes = (appt_buffered_start - end_dt).total_seconds() / 60
+                        print(f"  - Gap before existing appointment: {gap_minutes:.2f} minutes")
             
             if conflicts:
                 conflict_details = []
@@ -1628,20 +1807,34 @@ class AppointmentListAPI(APIView):
                     }
                     
                     # Get location point from address
-                    location = get_location_from_address(address_components)
-                    
-                    if location:
-                        appointment.location = location
-                        # Also update the simple lat/lng fields for backward compatibility
-                        appointment.latitude = location.y
-                        appointment.longitude = location.x
-                        print(f"DEBUG APPOINTMENT: Geocoded location: {location.y}, {location.x}")
+                    try:
+                        location = get_location_from_address(address_components)
+                        
+                        if location:
+                            appointment.location = location
+                            # Also update the simple lat/lng fields for backward compatibility
+                            appointment.latitude = location.y
+                            appointment.longitude = location.x
+                            print(f"DEBUG APPOINTMENT: Geocoded location: {location.y}, {location.x}")
+                    except Exception as geo_error:
+                        # Log the error but continue without geocoding
+                        print(f"DEBUG APPOINTMENT: Error during geocoding operation: {str(geo_error)}")
+                        # Don't set location if geocoding fails
+                        pass
+                except ImportError as import_err:
+                    # Handle missing geocoding utility
+                    print(f"DEBUG APPOINTMENT: Geocoding utility not available: {str(import_err)}")
                 except Exception as e:
-                    print(f"Error geocoding appointment address: {str(e)}")
+                    # Catch any other errors in the geocoding process
+                    print(f"DEBUG APPOINTMENT: Error initializing geocoding: {str(e)}")
             
-            appointment.save()
-            
-            print(f"DEBUG APPOINTMENT: Successfully created appointment {appointment.id}")
+            # Save the appointment regardless of geocoding success
+            try:
+                appointment.save()
+                print(f"DEBUG APPOINTMENT: Successfully created appointment {appointment.id}")
+            except Exception as save_err:
+                print(f"DEBUG APPOINTMENT: Error saving appointment: {str(save_err)}")
+                raise save_err  # Re-raise to be caught by the outer try-except
             
             return Response({
                 'id': str(appointment.id),  # Convert UUID to string for JSON
@@ -1740,7 +1933,7 @@ class AppointmentDetailAPI(APIView):
                 new_end_time = parse_datetime(end_time) if end_time and isinstance(end_time, str) else (end_time or appointment.end_time)
                 
                 # Apply buffer time for conflict detection
-                buffer_minutes = 15
+                buffer_minutes = BUFFER_MINUTES
                 buffered_start = new_start_time - timezone.timedelta(minutes=buffer_minutes)
                 buffered_end = new_end_time + timezone.timedelta(minutes=buffer_minutes)
                 

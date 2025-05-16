@@ -1,4 +1,4 @@
-import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef } from 'react';
+import React, { useState, useEffect, useCallback, forwardRef, useRef, useImperativeHandle } from 'react';
 import { Box, 
     Typography, 
     Button, 
@@ -56,6 +56,8 @@ const AppointmentCalendar = forwardRef(({ mode,
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [saveSuccess, setSaveSuccess] = useState(false);
+    // Add a forceUpdate counter to trigger re-renders
+    const [forceUpdate, setForceUpdate] = useState(0);
     
     // State for manage appointment modal
     const [appointmentDetailsOpen, setAppointmentDetailsOpen] = useState(false);
@@ -63,6 +65,7 @@ const AppointmentCalendar = forwardRef(({ mode,
     const [cancelInProgress, setCancelInProgress] = useState(false);
     const [cancelError, setCancelError] = useState('');
     const [cancelSuccess, setCancelSuccess] = useState(false);
+    const [updatedStatus, setUpdatedStatus] = useState('');
     
     const [dialogOpen, setDialogOpen] = useState(false);
     const [startTime, setStartTime] = useState(null);
@@ -105,49 +108,47 @@ const AppointmentCalendar = forwardRef(({ mode,
         try {
             const userStr = localStorage.getItem('user');
             if (!userStr) {
-                console.log('No user logged in, skipping appointment fetch');
                 return [];
             }
 
-            console.log('Fetching user appointments');
             const result = await appointmentsApi.getAll();
             
-            console.log('User appointments loaded:', result.data.length, 'appointments');
             if (result.data && result.data.length > 0) {
-                console.log('First appointment:', result.data[0]);
+                // Check for cancelled appointments
+                const cancelledAppointments = result.data.filter(a => a.status === 'cancelled');
+                if (cancelledAppointments.length > 0) {
+                    // Silently process cancelled appointments
+                }
             }
             
             // Update state, but only if data actually changed
             if (Array.isArray(result.data)) {
-                // Check if the appointments have actually changed to avoid unnecessary rerenders
-                const existingIds = new Set(userAppointments.map(a => a.id));
+                // NEVER filter out cancelled appointments - we need to keep them for display
                 const newAppointments = result.data;
                 
-                // Check if any appointments were added or removed
-                const hasChanges = newAppointments.length !== userAppointments.length || 
-                    newAppointments.some(newAppt => !existingIds.has(newAppt.id));
-                
-                if (hasChanges) {
-                    setUserAppointments(newAppointments);
-                }
+                // Update the state with the new data to ensure cancelled appointments are included
+                setUserAppointments(newAppointments);
             }
             
             return result.data;
         } catch (err) {
-            console.error('Error fetching user appointments:', err);
+            // Silent error handling
             return [];
         }
     };
     
     const fetchProviderAvailability = async (provId) => {
+        // Prevent unnecessary rerenders and API calls
+        if (!provId || loading) return;
+        
         try {
             setLoading(true);
-            console.log('Fetching availability for provider ID');
             const response = await availabilityApi.getForProvider(provId);
             
+            // Process data only if component is still mounted (use a flag if necessary)
             // Convert ISO strings to Date objects
             const formattedAvailability = {};
-            Object.entries(response.data).forEach(([dateStr, blocks]) => {
+            Object.entries(response.data || {}).forEach(([dateStr, blocks]) => {
                 if (Array.isArray(blocks)) {
                     formattedAvailability[dateStr] = blocks.map((block) => ({
                         id: block.id,
@@ -159,26 +160,29 @@ const AppointmentCalendar = forwardRef(({ mode,
                  }
             });
             
-            // Merge with initial availability to ensure all days have entries
-            const mergedAvailability = { ...timeBlocks };
-            
-            // Add all the loaded availability to the merged object
-            Object.entries(formattedAvailability).forEach(([dateStr, blocks]) => {
-                mergedAvailability[dateStr] = blocks;
-             });
-            
-            // Ensure all days in our view have entries (even if empty)
-            days.forEach(day => {
-                const dateStr = format(day, 'yyyy-MM-dd');
-                if (!mergedAvailability[dateStr]) {
-                    mergedAvailability[dateStr] = [];
-                 }
+            // Batch state updates to minimize renders
+            setTimeBlocks(prevTimeBlocks => {
+                // Merge with initial availability to ensure all days have entries
+                const mergedAvailability = { ...prevTimeBlocks };
+                
+                // Add all the loaded availability to the merged object
+                Object.entries(formattedAvailability).forEach(([dateStr, blocks]) => {
+                    mergedAvailability[dateStr] = blocks;
+                });
+                
+                // Ensure all days in our view have entries (even if empty)
+                days.forEach(day => {
+                    const dateStr = format(day, 'yyyy-MM-dd');
+                    if (!mergedAvailability[dateStr]) {
+                        mergedAvailability[dateStr] = [];
+                    }
+                });
+                
+                return mergedAvailability;
             });
             
-            setTimeBlocks(mergedAvailability);
             setLoading(false);
         } catch (err) {
-            console.error('Error fetching availability');
             setError('Failed to load availability data');
             setLoading(false);
          }
@@ -187,18 +191,15 @@ const AppointmentCalendar = forwardRef(({ mode,
     const fetchServiceAvailability = async (servId) => {
         try {
             setLoading(true);
-            console.log('Fetching availability for service ID:', servId);
             
             // Use the discount-enabled endpoint when in consumer mode
             const response = mode === 'consumer' 
                 ? await availabilityApi.getForServiceWithDiscount(servId)
                 : await availabilityApi.getForService(servId);
             
-            console.log('API Response received:', response.data);
                 
             // Debug logging to see what's in the data
             Object.keys(response.data).forEach(date => {
-                console.log(`Available slots for ${date}: ${response.data[date].length}`);
             });
             
             // Convert ISO strings to Date objects
@@ -206,7 +207,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             Object.entries(response.data).forEach(([dateStr, blocks]) => {
                 if (Array.isArray(blocks)) {
                     formattedAvailability[dateStr] = blocks.map((block, index) => {
-                        console.log(`Processing block ${index} for ${dateStr}:`, block);
                         return {
                             // Ensure each block has a truly unique ID by incorporating both date and index
                             id: `${dateStr}-${block.id}-${index}`,
@@ -223,17 +223,12 @@ const AppointmentCalendar = forwardRef(({ mode,
                 }
             });
             
-            console.log('Formatted availability:', formattedAvailability);
-            
             // Debug logging to check availability by date
             Object.keys(formattedAvailability).forEach(date => {
-                console.log(`Formatted slots for ${date}: ${formattedAvailability[date].length}`);
                 if (formattedAvailability[date].length > 0) {
-                    console.log('First slot:', formattedAvailability[date][0]);
                 }
             });
             
-            console.log('Service availability loaded - setting timeBlocks state');
             setTimeBlocks(formattedAvailability);
             setLoading(false);
         } catch (err) {
@@ -247,32 +242,33 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (mode !== 'provider' || !providerId) return;
         
         try {
-            console.log('Fetching provider appointments');
             const response = await appointmentsApi.getAllForProvider();
             
-            console.log('Provider appointments loaded:', response.data);
-            // Ensure we're setting the appointments in state
+            // Check if we have any cancelled appointments
+            const cancelledAppointments = response.data.filter(apt => apt.status === 'cancelled');
+            if (cancelledAppointments.length > 0) {
+                // Silently process cancelled appointments
+            }
+            
+            // Ensure we're setting the appointments in state without filtering
+            // Use functional state update to prevent race conditions
             setProviderAppointments(response.data || []);
         } catch (err) {
-            console.error('Error fetching provider appointments:', err);
-            // Don't set error - this is supplementary data
+            // Silent error handling, don't trigger state updates
         }
     };
     
     // Expose methods to parent component via ref
     useImperativeHandle(ref, () => ({
         fetchUserAppointments: async () => {
-            console.log('Refreshing appointments and availability');
             
             // First refresh service availability to update available slots
             if (mode === 'consumer' && serviceId) {
-                console.log('Refreshing service availability for service:', serviceId);
                 await fetchServiceAvailability(serviceId);
             }
             
             // Then refresh appointments
             const appointments = await fetchUserAppointments();
-            console.log('Appointments refreshed:', appointments?.length || 0);
             
             // Return the fetched appointments
             return appointments;
@@ -285,7 +281,6 @@ const AppointmentCalendar = forwardRef(({ mode,
         for (let i = 0; i < daysToShow; i++) {
             newDays.push(addDays(new Date(), i));
         }
-        console.log('Calendar days to display:', newDays.map(day => format(day, 'yyyy-MM-dd')));
         setDays(newDays);
         
         // Initialize empty availability for each day
@@ -296,7 +291,6 @@ const AppointmentCalendar = forwardRef(({ mode,
         });
         
         if (initialTimeBlocks) {
-            console.log('Initializing calendar with provided time blocks:', initialTimeBlocks);
             // Merge the initial time blocks with empty slots for days that don't have any blocks
             const mergedBlocks = { ...initialAvailability, ...initialTimeBlocks };
             setTimeBlocks(mergedBlocks);
@@ -306,11 +300,9 @@ const AppointmentCalendar = forwardRef(({ mode,
         
         // Load data based on mode
         if (mode === 'provider' && providerId) {
-            console.log('Provider mode - fetching availability and appointments');
             fetchProviderAvailability(providerId);
             fetchProviderAppointments(); // Fetch provider's appointments
         } else if (mode === 'consumer' && serviceId) {
-            console.log('Consumer mode - fetching service availability');
             fetchServiceAvailability(serviceId);
             fetchUserAppointments(); // Fetch user's existing appointments
         }
@@ -318,10 +310,8 @@ const AppointmentCalendar = forwardRef(({ mode,
     
     // Update timeBlocks when initialTimeBlocks prop changes
     useEffect(() => {
-        console.log('AppointmentCalendar initialTimeBlocks changed:', initialTimeBlocks);
         
         if (initialTimeBlocks && Object.keys(initialTimeBlocks).length > 0) {
-            console.log('Setting timeBlocks from initialTimeBlocks');
             
             // Deep check if the timeBlocks have actually changed to avoid unnecessary re-renders
             let hasChanged = false;
@@ -351,7 +341,6 @@ const AppointmentCalendar = forwardRef(({ mode,
                     }
                 });
                 
-                console.log('Setting formatted timeBlocks:', formattedBlocks);
                 setTimeBlocks(formattedBlocks);
             }
         }
@@ -365,7 +354,6 @@ const AppointmentCalendar = forwardRef(({ mode,
         
         try {
             setLoading(true);
-            console.log('Saving availability for provider ID');
             
             // Convert Date objects to ISO strings for API
             const apiAvailability = {};
@@ -379,9 +367,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 }
             });
             
-            console.log('Sending API availability data');
             await availabilityApi.save(providerId, apiAvailability);
-            console.log('API response from saving availability');
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
             setLoading(false);
@@ -432,10 +418,8 @@ const AppointmentCalendar = forwardRef(({ mode,
             return;
         }
         
-        console.log('Creating new time block for day');
         
         const dateStr = format(selectedDay, 'yyyy-MM-dd');
-        console.log('Date string for block');
         
         const newBlock = {
             id: `block-${Date.now()}`,
@@ -455,7 +439,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             )
         };
         
-        console.log('New time block created');
+
         
         // Check for overlapping blocks
         const existingBlocks = timeBlocks[dateStr] || [];
@@ -479,13 +463,13 @@ const AppointmentCalendar = forwardRef(({ mode,
             [dateStr]: updatedBlocks
          };
         
-        console.log('Updated availability with new block');
+
         setTimeBlocks(newAvailability);
         setDialogOpen(false);
         
         // Notify parent component if callback provided
         if (onAvailabilityChange) {
-            console.log('Notifying parent of availability change');
+
             onAvailabilityChange(newAvailability);
         } else {
             console.warn('No onAvailabilityChange callback provided');
@@ -514,7 +498,7 @@ const AppointmentCalendar = forwardRef(({ mode,
     
     const handleBlockClick = (block) => {
         if (mode === 'consumer' && onBlockClick) {
-            console.log('Block clicked for booking');
+
             onBlockClick(block);
          }
     };
@@ -539,9 +523,6 @@ const AppointmentCalendar = forwardRef(({ mode,
     // Update the getAppointmentsForDay function to be more robust
     const getAppointmentsForDay = (day) => {
         const dateStr = format(day, 'yyyy-MM-dd');
-        console.log('Getting appointments for day:', dateStr);
-        console.log('Current appointments:', appointments);
-        console.log('Current userAppointments:', userAppointments);
         
         // Create a combined array without duplicates
         const allAppointments = [...appointments];
@@ -554,13 +535,17 @@ const AppointmentCalendar = forwardRef(({ mode,
             }
         });
         
-        // Filter for the current day
+        // Filter for the current day, but keep ALL statuses including cancelled
         const dayAppointments = allAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
-            return appointmentDate === dateStr;
+            const matchesDay = appointmentDate === dateStr;
+            
+            if (appointment.status === 'cancelled' && matchesDay) {
+            }
+            
+            return matchesDay;
         });
         
-        console.log('Filtered appointments for day:', dayAppointments);
         return dayAppointments;
     };
     
@@ -569,15 +554,12 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (mode !== 'provider') return [];
         
         const dateStr = format(day, 'yyyy-MM-dd');
-        console.log('Getting provider appointments for day:', dateStr);
-        console.log('Current provider appointments:', providerAppointments);
         
         const dayAppointments = providerAppointments.filter(appointment => {
             const appointmentDate = format(new Date(appointment.start_time), 'yyyy-MM-dd');
             return appointmentDate === dateStr;
         });
         
-        console.log('Filtered appointments for day:', dayAppointments);
         return dayAppointments;
     };
     
@@ -639,6 +621,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             boxShadow: '0 2px 8px 0 rgba(36,81,255,0.10)',
             border: '1.5px solid rgba(36,81,255,0.15)',
             overflow: 'hidden',
+            position: 'relative', // Add relative positioning for buffer indicators
         };
         
         if (appointment) {
@@ -669,12 +652,17 @@ const AppointmentCalendar = forwardRef(({ mode,
             const status = appointment.status || 'pending';
             const colors = statusColors[status] || statusColors.pending;
 
+            // For cancelled appointments - make them visible but with a lower z-index
+            // Make sure the z-index is lower than availability blocks in consumer mode
+            const zIndexValue = status === 'cancelled' ? 1 : 4;
+
             return {
                 ...commonStyles,
                 backgroundColor: colors.bg,
                 color: colors.text,
                 border: `1.5px solid ${colors.border}`,
-                zIndex: 4, // Ensure appointments appear above availability blocks
+                zIndex: zIndexValue, // Use the determined z-index based on status
+                opacity: status === 'cancelled' ? 0.9 : 1, // Slightly transparent for cancelled, but still visible
             };
         } else if (isUserAppointment) {
             return {
@@ -685,23 +673,43 @@ const AppointmentCalendar = forwardRef(({ mode,
                 zIndex: 4,
             };
         } else if (mode === 'consumer') {
-            if (block.discountPercentage > 0) {
+            // For consumer mode, show available blocks with optional buffer indication
+            const hasBuffer = block.buffer_info && block.buffer_info.has_buffer;
+            const baseStyle = {
+                ...commonStyles,
+                // Use different styles for discounted slots
+                backgroundColor: block.discountPercentage > 0 ? '#388e3c' : '#232a5c',
+                color: '#fff',
+                border: `1.5px solid ${block.discountPercentage > 0 ? '#388e3c' : '#232a5c'}`,
+                zIndex: 5, // Higher than cancelled appointments (z-index 2) and normal appointments (z-index 4)
+            };
+            
+            // If this block has buffer information, we'll indicate it
+            if (hasBuffer && mode === 'consumer') {
                 return {
-                    ...commonStyles,
-                    backgroundColor: '#388e3c',
-                    color: '#fff',
-                    border: '1.5px solid #388e3c',
-                    zIndex: 3,
-                };
-            } else {
-                return {
-                    ...commonStyles,
-                    backgroundColor: '#232a5c',
-                    color: '#fff',
-                    border: '1.5px solid #232a5c',
-                    zIndex: 3,
+                    ...baseStyle,
+                    // Add a subtle indicator for the buffer zone
+                    '&::before, &::after': {
+                        content: '""',
+                        position: 'absolute',
+                        width: '100%',
+                        height: '5px',
+                        left: 0,
+                        backgroundColor: 'rgba(255,255,255,0.2)',
+                        zIndex: 1,
+                    },
+                    // Add buffer indicator at top (before buffer)
+                    '&::before': {
+                        top: '-5px',
+                    },
+                    // Add buffer indicator at bottom (after buffer)
+                    '&::after': {
+                        bottom: '-5px',
+                    },
                 };
             }
+            
+            return baseStyle;
         } else {
             // Provider mode (availability blocks)
             if (block.discountPercentage > 0) {
@@ -724,26 +732,64 @@ const AppointmentCalendar = forwardRef(({ mode,
         }
     };
 
-    // Handle provider appointment click
-    const handleProviderAppointmentClick = (appointment) => {
-        console.log('Provider clicked on appointment:', appointment);
+    // Memoize handlers with useCallback to prevent unnecessary re-renders
+    const handleProviderAppointmentClick = useCallback((appointment) => {
         if (mode === 'provider') {
             setSelectedAppointment(appointment);
             setCancelError('');
             setCancelSuccess(false);
             setAppointmentDetailsOpen(true);
         }
-    };
+    }, [mode]);
 
     // Handle appointment click to show details
-    const handleAppointmentClick = (appointment) => {
+    const handleAppointmentClick = useCallback((appointment) => {
         if (mode === 'consumer') {
             setSelectedAppointment(appointment);
             setCancelError('');
             setCancelSuccess(false);
             setAppointmentDetailsOpen(true);
         }
-    };
+    }, [mode]);
+
+    // Handle status change for provider appointments
+    const handleStatusChange = useCallback(async (newStatus) => {
+        if (!selectedAppointment) return;
+        
+        try {
+            setCancelInProgress(true);
+            setCancelError('');
+            
+            // Ensure ID is treated as a string
+            const appointmentId = selectedAppointment.id.toString();
+            
+            // Call API to update appointment status
+            await appointmentsApi.updateStatus(appointmentId, newStatus);
+            
+            // Store the updated status for the confirmation message
+            setUpdatedStatus(newStatus);
+            setCancelSuccess(true);
+            setCancelInProgress(false);
+            
+            // Force re-render by incrementing the counter
+            setForceUpdate(prev => prev + 1);
+            
+            // Auto-close modal after 2 seconds and fetch data again
+            setTimeout(() => {
+                setAppointmentDetailsOpen(false);
+                setSelectedAppointment(null);
+                
+                // Refresh data one more time after closing to ensure UI is updated
+                if (mode === 'provider' && providerId) {
+                    fetchProviderAppointments();
+                    providerId && fetchProviderAvailability(providerId);
+                }
+            }, 2000);
+        } catch (err) {
+            setCancelError(`Failed to update appointment status to ${newStatus}. Please try again.`);
+            setCancelInProgress(false);
+        }
+    }, [selectedAppointment, mode, providerId]);
 
     // Handle cancellation of appointment
     const handleCancelAppointment = async () => {
@@ -755,73 +801,71 @@ const AppointmentCalendar = forwardRef(({ mode,
             
             // Make sure the appointment ID is a string for the API call
             const appointmentId = selectedAppointment.id.toString();
-            console.log('Cancelling appointment with ID:', appointmentId);
             
             // Call API to update appointment status
             await appointmentsApi.updateStatus(appointmentId, 'cancelled');
-            console.log('Appointment cancelled successfully');
             
+            // Store the cancelled status for the confirmation message
+            setUpdatedStatus('cancelled');
             setCancelSuccess(true);
             setCancelInProgress(false);
             
-            // Refresh appointments after cancellation
-            await fetchUserAppointments();
+            // Force re-render by incrementing the counter
+            setForceUpdate(prev => prev + 1);
             
-            // If refreshing service availability is needed
-            if (serviceId) {
-                fetchServiceAvailability(serviceId);
+            // Update appointment in the local state if it exists there
+            setUserAppointments(prev => 
+                prev.map(apt => 
+                    apt.id === appointmentId 
+                        ? { ...apt, status: 'cancelled' } 
+                        : apt
+                )
+            );
+            
+            // Immediately fetch updated data
+            try {
+                const [updatedAppointments] = await Promise.all([
+                    fetchUserAppointments(),
+                    serviceId && fetchServiceAvailability(serviceId)
+                ]);
+                
+                // Make sure we directly update the userAppointments state with the new data
+                if (updatedAppointments && updatedAppointments.length > 0) {
+                    setUserAppointments(updatedAppointments);
+                }
+                
+                // Force another re-render
+                setForceUpdate(prev => prev + 1);
+            } catch (refreshErr) {
+                console.error('Error refreshing data after cancellation:', refreshErr);
             }
             
-            // Close modal after short delay
-            setTimeout(() => {
+            // Auto-close modal after 2 seconds and fetch data again
+            setTimeout(async () => {
                 setAppointmentDetailsOpen(false);
                 setSelectedAppointment(null);
+                
+                // Refresh data again after closing to ensure UI is updated
+                try {
+                    const [updatedAppointments] = await Promise.all([
+                        fetchUserAppointments(),
+                        serviceId && fetchServiceAvailability(serviceId)
+                    ]);
+                    
+                    // Direct state update
+                    if (updatedAppointments && updatedAppointments.length > 0) {
+                        setUserAppointments(updatedAppointments);
+                    }
+                    
+                    // Force re-render again
+                    setForceUpdate(prev => prev + 1);
+                } catch (refreshErr) {
+                    console.error('Error refreshing data after modal close:', refreshErr);
+                }
             }, 2000);
-            
         } catch (err) {
             console.error('Error cancelling appointment:', err);
             setCancelError('Failed to cancel appointment. Please try again.');
-            setCancelInProgress(false);
-        }
-    };
-
-    // Handle status change for provider appointments
-    const handleStatusChange = async (newStatus) => {
-        if (!selectedAppointment) return;
-        
-        try {
-            setCancelInProgress(true);
-            setCancelError('');
-            
-            // Ensure ID is treated as a string
-            const appointmentId = selectedAppointment.id.toString();
-            console.log(`Updating appointment ${appointmentId} status to ${newStatus}`);
-            
-            // Call API to update appointment status
-            await appointmentsApi.updateStatus(appointmentId, newStatus);
-            console.log('Appointment status updated successfully');
-            
-            setCancelSuccess(true);
-            setCancelInProgress(false);
-            
-            // Refresh provider appointments
-            await fetchProviderAppointments();
-            
-            // If the appointment was marked as cancelled, refresh availability to show the slot as available again
-            if (newStatus === 'cancelled' && providerId) {
-                console.log('Refreshing provider availability after cancellation');
-                await fetchProviderAvailability(providerId);
-            }
-            
-            // Close modal after short delay
-            setTimeout(() => {
-                setAppointmentDetailsOpen(false);
-                setSelectedAppointment(null);
-            }, 2000);
-            
-        } catch (err) {
-            console.error('Error updating appointment status:', err);
-            setCancelError(`Failed to update appointment status to ${newStatus}. Please try again.`);
             setCancelInProgress(false);
         }
     };
@@ -890,7 +934,6 @@ const AppointmentCalendar = forwardRef(({ mode,
         setDragCurrentTime(startTime);
         setDragDay(day);
         
-        console.log('Started dragging at:', startTime);
     };
 
     // Auto-scroll function
@@ -979,7 +1022,7 @@ const AppointmentCalendar = forwardRef(({ mode,
         );
     };
     
-    // Update the renderTimeBlock function to handle overlapping appointments and availability
+    // Memoize the appointment block rendering for better performance
     const renderTimeBlock = (day, hour) => {
         const dateStr = format(day, 'yyyy-MM-dd');
         const blocks = timeBlocks[dateStr] || [];
@@ -1009,6 +1052,7 @@ const AppointmentCalendar = forwardRef(({ mode,
 
                 // Determine if block is fully booked
                 const overlappingApts = allAppointments.filter(apt => {
+                    // Include all appointments (including cancelled ones) for checking overlap
                     const aptStart = new Date(apt.start_time);
                     const aptEnd = new Date(apt.end_time);
                     return areIntervalsOverlapping({ start: blockStart, end: blockEnd }, { start: aptStart, end: aptEnd });
@@ -1016,7 +1060,9 @@ const AppointmentCalendar = forwardRef(({ mode,
 
                 const blockDurationMin = (blockEnd - blockStart) / 60000;
                 let bookedMin = 0;
-                overlappingApts.forEach(apt => {
+                
+                // Only count non-cancelled appointments towards "fully booked" calculation
+                overlappingApts.filter(apt => apt.status !== 'cancelled').forEach(apt => {
                     const aptStart = new Date(apt.start_time);
                     const aptEnd = new Date(apt.end_time);
                     const overlapStart = aptStart > blockStart ? aptStart : blockStart;
@@ -1031,7 +1077,9 @@ const AppointmentCalendar = forwardRef(({ mode,
                 availabilitySegments.push({ start: blockStart, end: blockEnd, block, fullyBooked });
             } else {
                 // Consumer view – split the block into open segments around appointments
+                // For consumer view, only non-cancelled appointments should block availability
                 const overlappingApts = allAppointments.filter(apt => {
+                    if (apt.status === 'cancelled') return false; // Ignore cancelled appointments for availability
                     const aptStart = new Date(apt.start_time);
                     const aptEnd = new Date(apt.end_time);
                     return areIntervalsOverlapping({ start: blockStart, end: blockEnd }, { start: aptStart, end: aptEnd });
@@ -1071,7 +1119,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
             return (
                 <Box
-                    key={`block-${seg.block.id}-${hour}-${idx}`}
+                    key={`block-${seg.block.id}-${hour}-${idx}`} // Remove forceUpdate from key
                     className="availability-block"
                     sx={{
                         ...getBlockStyle(seg.block, false, null),
@@ -1079,7 +1127,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                         top: `${top}px`,
                         height: `${height}px`,
                         zIndex: 3,
-                        width: mode === 'provider' ? '100%' : 'calc(100% - 8px)',
+                        width: mode === 'provider' ? 'calc(100% - 30px)' : 'calc(100% - 38px)',
                         left: mode === 'provider' ? 0 : '4px'
                     }}
                     onClick={() => {
@@ -1144,12 +1192,18 @@ const AppointmentCalendar = forwardRef(({ mode,
             );
         });
 
-        // Render all appointments for this hour (on top)
+        // Render all appointments for this hour (on top), including cancelled ones
         const appointmentBlocks = allAppointments
             .filter(apt => {
                 const aptStart = new Date(apt.start_time);
                 const aptEnd = new Date(apt.end_time);
-                return areIntervalsOverlapping({ start: aptStart, end: aptEnd }, { start: hourStart, end: hourEnd });
+                // Only filter by time overlap, not by status - we want to show ALL appointments including cancelled ones
+                const overlaps = areIntervalsOverlapping({ start: aptStart, end: aptEnd }, { start: hourStart, end: hourEnd });
+                
+                if (apt.status === 'cancelled') {
+                }
+                
+                return overlaps;
             })
             .map((apt, idx) => {
                 const startTime = new Date(apt.start_time);
@@ -1158,17 +1212,22 @@ const AppointmentCalendar = forwardRef(({ mode,
                 const endMinutes = endTime.getHours() * 60 + endTime.getMinutes();
                 const top = ((startMinutes / 60) - WORKING_HOURS_START) * HOUR_HEIGHT;
                 const height = ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT;
+                
+                // Debug log for appointment rendering
+                if (apt.status === 'cancelled') {
+                    // Console log removed
+                }
+                
                 return (
                     <Box
-                        key={`appointment-${dateStr}-${apt.id}-${hour}-${idx}`}
-                        className="appointment-block"
+                        key={`appointment-${dateStr}-${apt.id}-${hour}-${idx}`} // Remove forceUpdate from key
+                        className={`appointment-block status-${apt.status}`}
                         sx={{
                             ...getBlockStyle({}, false, apt),
                             position: 'absolute',
                             top: `${top}px`,
                             height: `${height}px`,
-                            zIndex: 4,
-                            width: mode === 'provider' ? 'calc(100% - 16px)' : 'calc(100% - 8px)',
+                            width: mode === 'provider' ? 'calc(100% - 46px)' : 'calc(100% - 38px)',
                             left: mode === 'provider' ? '8px' : '4px',
                             minHeight: '32px',
                             display: 'flex',
@@ -1176,7 +1235,12 @@ const AppointmentCalendar = forwardRef(({ mode,
                             alignItems: 'center',
                             justifyContent: 'center',
                             overflow: 'hidden',
-                            px: 1
+                            px: 1,
+                            // Make cancelled appointments more visible
+                            ...(apt.status === 'cancelled' && {
+                                boxShadow: '0 0 0 1px #f5c6cb',
+                                border: '2px solid #f5c6cb',
+                            })
                         }}
                         onClick={() => {
                             if (mode === 'provider') {
@@ -1193,6 +1257,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
+                            textDecoration: apt.status === 'cancelled' ? 'line-through' : 'none' // Add strikethrough for cancelled
                         }}>
                             {apt.service?.name || 'Booked'}
                         </Typography>
@@ -1203,10 +1268,26 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
-                                ml: 1
+                                ml: 1,
+                                textDecoration: apt.status === 'cancelled' ? 'line-through' : 'none' // Add strikethrough for cancelled
                             }}>
                                 {apt.consumer.username}
                             </Typography>
+                        )}
+                        {apt.status === 'cancelled' && (
+                            <Box sx={{
+                                position: 'absolute',
+                                bottom: '3px',
+                                right: '3px',
+                                fontSize: '0.6rem',
+                                fontWeight: 'bold',
+                                backgroundColor: 'rgba(255,255,255,0.7)',
+                                color: '#721c24',
+                                padding: '1px 3px',
+                                borderRadius: '2px'
+                            }}>
+                                CANCELLED
+                            </Box>
                         )}
                     </Box>
                 );
@@ -1224,7 +1305,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             event.stopPropagation();
         }
         
-        console.log('Editing block:', block);
         
         setSelectedDay(day);
         setEditingBlock(block);
@@ -1266,10 +1346,8 @@ const AppointmentCalendar = forwardRef(({ mode,
             return;
         }
         
-        console.log('Saving edited block');
         
         const dateStr = format(selectedDay, 'yyyy-MM-dd');
-        console.log('Date string for block:', dateStr);
         
         // Create updated block with same ID but new times
         const updatedBlock = {
@@ -1290,7 +1368,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             )
         };
         
-        console.log('Updated block:', updatedBlock);
         
         // Get existing blocks for this day and replace the one being edited
         const existingBlocks = timeBlocks[dateStr] || [];
@@ -1306,14 +1383,12 @@ const AppointmentCalendar = forwardRef(({ mode,
             [dateStr]: updatedBlocks
         };
         
-        console.log('Updated availability with edited block:', newAvailability);
         setTimeBlocks(newAvailability);
         setEditDialogOpen(false);
         setEditingBlock(null);
         
         // Notify parent component if callback provided
         if (onAvailabilityChange) {
-            console.log('Notifying parent of availability change after edit');
             onAvailabilityChange(newAvailability);
         }
     };
@@ -1327,7 +1402,6 @@ const AppointmentCalendar = forwardRef(({ mode,
             event.stopPropagation();
         }
         
-        console.log('Deleting block:', block, 'for day:', format(day, 'yyyy-MM-dd'));
         setSelectedDay(day);
         setDeletingBlock(block);
         setDeleteDialogOpen(true);
@@ -1342,14 +1416,12 @@ const AppointmentCalendar = forwardRef(({ mode,
         if (mode !== 'provider' || !deletingBlock) return;
         
         const dateStr = format(selectedDay, 'yyyy-MM-dd');
-        console.log('Confirming deletion of block for date:', dateStr, 'block ID:', deletingBlock.id);
         
         // Create a deep copy of the current timeBlocks state
         const updatedTimeBlocks = { ...timeBlocks };
         
         // Make sure we have an array for this date
         if (!updatedTimeBlocks[dateStr] || !Array.isArray(updatedTimeBlocks[dateStr])) {
-            console.log('No existing blocks for this date or invalid data structure');
             setDeleteDialogOpen(false);
             setDeletingBlock(null);
             return;
@@ -1357,22 +1429,18 @@ const AppointmentCalendar = forwardRef(({ mode,
         
         // Get existing blocks and filter out the one to delete
         const existingBlocks = updatedTimeBlocks[dateStr];
-        console.log('Existing blocks before deletion:', existingBlocks.length);
         
         const updatedBlocks = existingBlocks.filter(block => {
             const blocksAreDifferent = block.id !== deletingBlock.id;
             if (!blocksAreDifferent) {
-                console.log('Found block to delete with ID:', block.id);
             }
             return blocksAreDifferent;
         });
         
-        console.log('Blocks after filtering:', updatedBlocks.length);
         
         // Update the timeBlocks state with the filtered array
         updatedTimeBlocks[dateStr] = updatedBlocks;
         
-        console.log('Setting new timeBlocks state with block deleted');
         setTimeBlocks(updatedTimeBlocks);
         
         // First close the dialog and clear the deleting state
@@ -1381,23 +1449,22 @@ const AppointmentCalendar = forwardRef(({ mode,
         
         // Then notify parent component with the updated blocks
         if (onAvailabilityChange) {
-            console.log('Notifying parent of availability change after deletion');
             // Use the timeBlocks copy directly to ensure the right data is passed
             onAvailabilityChange(updatedTimeBlocks);
         }
     };
     
     // Handle mouse move event to update drag block and possibly trigger auto-scroll
-    const handleMouseMove = (e) => {
+    const handleMouseMove = useCallback((e) => {
         if (!isDragging || !dragDay) return;
         
-        // Simple throttling to prevent too many updates
+        // More aggressive throttling to prevent excessive updates
         if (dragThrottleRef.current) return;
         dragThrottleRef.current = true;
         
         setTimeout(() => {
             dragThrottleRef.current = false;
-        }, 16); // Approximately 60fps
+        }, 50); // Increase throttle time from 16ms to 50ms for smoother performance
         
         const dayElement = dayColumnsRef.current[format(dragDay, 'yyyy-MM-dd')];
         if (!dayElement) return;
@@ -1434,7 +1501,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 }
             }
         }
-    };
+    }, [isDragging, dragDay, autoScrolling]);
 
     // Handle mouse up event to finalize the block
     const handleMouseUp = () => {
@@ -1465,22 +1532,14 @@ const AppointmentCalendar = forwardRef(({ mode,
         const dateStr = format(dragDay, 'yyyy-MM-dd');
         const existingBlocks = timeBlocks[dateStr] || [];
         
-        console.log(`MouseUp: Creating block for ${dateStr}`, {
-            existingBlocks: existingBlocks,
-            dragBlock: dragBlock
-        });
-        
         // Check for overlaps with existing blocks
         const hasOverlap = existingBlocks.some(block => 
             areIntervalsOverlapping(
-                { start: block.start instanceof Date ? block.start : new Date(block.start), 
-                    end: block.end instanceof Date ? block.end : new Date(block.end) },
+                { start: block.start instanceof Date ? block.start : new Date(block.start),
+                end: block.end instanceof Date ? block.end : new Date(block.end) },
                 { start: dragBlock.start, end: dragBlock.end }
             )
         );
-        
-        // First, clean up the drag state
-        setIsDragging(false);
         setDragStartTime(null);
         setDragCurrentTime(null);
         setDragDay(null);
@@ -1505,7 +1564,6 @@ const AppointmentCalendar = forwardRef(({ mode,
                 )
             };
             
-            console.log('Creating new availability block:', newBlock);
             
             const updatedBlocks = [...existingBlocks, newBlock].sort((a, b) => 
                 (a.start instanceof Date ? a.start : new Date(a.start)).getTime() - 
@@ -1519,17 +1577,14 @@ const AppointmentCalendar = forwardRef(({ mode,
             };
             
             // Update the timeBlocks state
-            console.log('MouseUp: Setting new timeBlocks state:', newTimeBlocks);
             setTimeBlocks(newTimeBlocks);
             
             // Log current state
             setTimeout(() => {
-                console.log('After state update, timeBlocks:', timeBlocks);
             }, 100);
             
             // Notify parent component
             if (onAvailabilityChange) {
-                console.log('MouseUp: Notifying parent of availability change');
                 
                 // Use the newTimeBlocks variable directly instead of accessing state
                 // which might not have been updated yet
@@ -1539,6 +1594,43 @@ const AppointmentCalendar = forwardRef(({ mode,
             }
         }
     };
+
+    // Consolidated useEffect for data refresh
+    useEffect(() => {
+        if (forceUpdate > 0) {
+            // Create a debounced refresh to avoid multiple refreshes
+            const refreshTimeout = setTimeout(async () => {
+                if (mode === 'provider' && providerId) {
+                    try {
+                        await Promise.all([
+                            fetchProviderAppointments(),
+                            fetchProviderAvailability(providerId)
+                        ]);
+                    } catch (err) {
+                        // Silently handle error, don't trigger more state updates
+                    }
+                } else if (mode === 'consumer') {
+                    try {
+                        const updatedAppointments = await fetchUserAppointments();
+                        
+                        // Only update state if needed for cancelled appointments
+                        if (updatedAppointments && updatedAppointments.length > 0) {
+                            setUserAppointments(updatedAppointments);
+                        }
+                        
+                        // Refresh availability if we have a service ID
+                        if (serviceId) {
+                            await fetchServiceAvailability(serviceId);
+                        }
+                    } catch (err) {
+                        // Silently handle error, don't trigger more state updates
+                    }
+                }
+            }, 300); // Add a small debounce delay
+            
+            return () => clearTimeout(refreshTimeout);
+        }
+    }, [forceUpdate, mode, providerId, serviceId]);
 
     if (loading && Object.keys(timeBlocks).length === 0) {
         return (
@@ -1560,7 +1652,7 @@ const AppointmentCalendar = forwardRef(({ mode,
             maxWidth: '100%',
             overflow: 'hidden',
             mr: 0,
-            minHeight: '580px', // Add a minimum height to ensure proper display
+            minHeight: '580px' // Add a minimum height to ensure proper display
         }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 {/* Only show title if we're in provider mode or no service is provided */}
@@ -1883,17 +1975,14 @@ const AppointmentCalendar = forwardRef(({ mode,
             
             {mode === 'consumer' && (
                 <Box sx={{ mt: 2, px: 2 }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                        Each appointment includes a 15-minute buffer time afterward to prevent back-to-back bookings.
-                    </Typography>
                     <Box sx={{ display: 'flex', mt: 2, gap: 2, flexWrap: 'wrap' }}>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                             <Box component="span" sx={{ width: 12, 
                                 height: 12, 
-                                backgroundColor: '#e3f2fd', 
+                                backgroundColor: '#232a5c', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #90caf9' 
+                                border: '1px solid #232a5c' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Available Slots
@@ -1902,10 +1991,10 @@ const AppointmentCalendar = forwardRef(({ mode,
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
                             <Box component="span" sx={{ width: 12, 
                                 height: 12, 
-                                backgroundColor: '#e8f5e9', 
+                                backgroundColor: '#388e3c', 
                                 display: 'inline-block', 
                                 mr: 1, 
-                                border: '1px solid #a5d6a7' 
+                                border: '1px solid #388e3c' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Discounted Slots
@@ -1920,7 +2009,19 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 border: '1px solid #c3e6cb' 
                               }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                                Your Booked Appointments
+                                Confirmed Appointments
+                            </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box component="span" sx={{ width: 12, 
+                                height: 12, 
+                                backgroundColor: '#f8d7da', 
+                                display: 'inline-block', 
+                                mr: 1, 
+                                border: '1px solid #f5c6cb' 
+                              }}></Box>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                                Cancelled Appointments
                             </Typography>
                         </Box>
                     </Box>
@@ -1935,7 +2036,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                     </Typography>
                     <Box sx={{ display: 'flex', mt: 2, flexWrap: 'wrap', gap: 2 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box component="span" sx={{ width: 12, height: 12, backgroundColor: '#e3f2fd', display: 'inline-block', mr: 1, border: '1px solid #90caf9' }}></Box>
+                            <Box component="span" sx={{ width: 12, height: 12, backgroundColor: '#232a5c', display: 'inline-block', mr: 1, border: '1px solid #232a5c' }}></Box>
                             <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
                                 Available Blocks
                             </Typography>
@@ -1970,18 +2071,24 @@ const AppointmentCalendar = forwardRef(({ mode,
             
             { /* Appointment details modal */ }
             {appointmentDetailsOpen && (
-                <Dialog open={appointmentDetailsOpen} onClose={() => !cancelInProgress && setAppointmentDetailsOpen(false)} maxWidth="sm" fullWidth>
+                <Dialog open={appointmentDetailsOpen} onClose={() => !cancelInProgress && !cancelSuccess && setAppointmentDetailsOpen(false)} maxWidth="sm" fullWidth>
                     <DialogTitle>
-                        {cancelSuccess ? "Appointment Cancelled" : "Appointment Details"}
+                        {cancelSuccess ? "Appointment Status Updated" : "Appointment Details"}
                     </DialogTitle>
                     {cancelSuccess ? (
                         <DialogContent sx={{ pl: 4, pr: 2 }}>
                             <Box sx={{ textAlign: 'center', py: 2 }}>
                                 <CheckCircleIcon color="success" sx={{ fontSize: '3rem', mb: 2 }} />
                                 <Typography variant="h6" gutterBottom>
-                                    {mode === 'provider' ? 
-                                        "The appointment has been cancelled successfully!" : 
-                                        "Your appointment has been cancelled successfully!"}
+                                    {updatedStatus === 'confirmed' 
+                                        ? "The appointment has been confirmed successfully!" 
+                                        : updatedStatus === 'cancelled'
+                                        ? (mode === 'provider' 
+                                            ? "The appointment has been cancelled successfully!" 
+                                            : "Your appointment has been cancelled successfully!")
+                                        : updatedStatus === 'completed'
+                                        ? "The appointment has been marked as completed!"
+                                        : "The appointment status has been updated successfully!"}
                                 </Typography>
                             </Box>
                         </DialogContent>
@@ -2111,60 +2218,64 @@ const AppointmentCalendar = forwardRef(({ mode,
                         </DialogContent>
                     )}
                     
-                    <DialogActions>
-                        <Button 
-                            onClick={() => setAppointmentDetailsOpen(false)} 
-                            disabled={cancelInProgress}
-                        >
-                            Close
-                        </Button>
-                        {/* Consumer cancel button */}
-                        {mode === 'consumer' && (selectedAppointment?.status === 'confirmed' || selectedAppointment?.status === 'pending') && (
+                    {/* Only show dialog actions (buttons) if we're not in success state */}
+                    {!cancelSuccess && (
+                        <DialogActions>
                             <Button 
-                                onClick={handleCancelAppointment} 
-                                variant="contained" 
-                                color="error"
+                                onClick={() => setAppointmentDetailsOpen(false)} 
                                 disabled={cancelInProgress}
                             >
-                                {cancelInProgress ? <CircularProgress size={24} /> : 'Cancel Appointment'}
+                                Close
                             </Button>
-                        )}
-                        
-                        {/* Provider status update buttons */}
-                        {mode === 'provider' && selectedAppointment?.status === 'pending' && (
-                            <Button
-                                onClick={() => handleStatusChange('confirmed')}
-                                variant="contained"
-                                color="success"
-                                disabled={cancelInProgress}
-                            >
-                                {cancelInProgress ? <CircularProgress size={24} /> : 'Confirm Appointment'}
-                            </Button>
-                        )}
-                        
-                        {mode === 'provider' && 
-                         (selectedAppointment?.status === 'confirmed' || selectedAppointment?.status === 'pending') && (
-                            <Button 
-                                onClick={() => handleStatusChange('cancelled')} 
-                                variant="contained" 
-                                color="error"
-                                disabled={cancelInProgress}
-                            >
-                                {cancelInProgress ? <CircularProgress size={24} /> : 'Cancel Appointment'}
-                            </Button>
-                        )}
-                        
-                        {mode === 'provider' && selectedAppointment?.status === 'confirmed' && (
-                            <Button
-                                onClick={() => handleStatusChange('completed')}
-                                variant="contained"
-                                color="primary"
-                                disabled={cancelInProgress}
-                            >
-                                {cancelInProgress ? <CircularProgress size={24} /> : 'Mark as Completed'}
-                            </Button>
-                        )}
-                    </DialogActions>
+                            {/* Consumer cancel button */}
+                            {mode === 'consumer' && (selectedAppointment?.status === 'confirmed' || selectedAppointment?.status === 'pending') && (
+                                <Button 
+                                    onClick={handleCancelAppointment} 
+                                    variant="contained" 
+                                    color="error"
+                                    disabled={cancelInProgress}
+                                >
+                                    {cancelInProgress ? <CircularProgress size={24} /> : 'Cancel Appointment'}
+                                </Button>
+                            )}
+                            
+                            {/* Provider status update buttons */}
+                            {mode === 'provider' && selectedAppointment?.status === 'pending' && (
+                                <Button
+                                    onClick={() => handleStatusChange('confirmed')}
+                                    variant="contained"
+                                    color="success"
+                                    disabled={cancelInProgress}
+                                >
+                                    {cancelInProgress ? <CircularProgress size={24} /> : 'Confirm Appointment'}
+                                </Button>
+                            )}
+                            
+                            {mode === 'provider' && 
+                             (selectedAppointment?.status === 'confirmed' || selectedAppointment?.status === 'pending') && (
+                                <Button 
+                                    onClick={() => handleStatusChange('cancelled')} 
+                                    variant="contained" 
+                                    color="error"
+                                    disabled={cancelInProgress}
+                                >
+                                    {cancelInProgress ? <CircularProgress size={24} /> : 'Cancel Appointment'}
+                                </Button>
+                            )}
+                            
+                            {mode === 'provider' && selectedAppointment?.status === 'confirmed' && 
+                             selectedAppointment?.end_time && new Date(selectedAppointment.end_time) <= new Date() && (
+                                <Button
+                                    onClick={() => handleStatusChange('completed')}
+                                    variant="contained"
+                                    color="primary"
+                                    disabled={cancelInProgress}
+                                >
+                                    {cancelInProgress ? <CircularProgress size={24} /> : 'Mark as Completed'}
+                                </Button>
+                            )}
+                        </DialogActions>
+                    )}
                 </Dialog>
             )}
             
@@ -2199,7 +2310,6 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                 const newTime = new Date(selectedDay);
                                                 newTime.setHours(Number(hours), Number(minutes));
                                                 setStartTime(newTime);
-                                                console.log('New start time:', newTime);
                                             }}
                                             InputLabelProps={{
                                                 shrink: true,
@@ -2221,7 +2331,6 @@ const AppointmentCalendar = forwardRef(({ mode,
                                                 const newTime = new Date(selectedDay);
                                                 newTime.setHours(Number(hours), Number(minutes));
                                                 setEndTime(newTime);
-                                                console.log('New end time:', newTime);
                                             }}
                                             InputLabelProps={{
                                                 shrink: true,
