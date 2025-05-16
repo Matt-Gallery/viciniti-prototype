@@ -22,10 +22,7 @@ const Login = () => { const navigate = useNavigate();
 
     const handleSubmit = async (e) => { e.preventDefault();
         try {
-            console.log('Attempting login with:', { username: formData.username, passwordLength: formData.password?.length });
             const response = await auth.login(formData.username, formData.password);
-            
-            console.log('Login response:', response.data);
             
             // Check if the response has the expected structure - Django token auth typically returns just the token
             if (!response.data.token) {
@@ -40,24 +37,18 @@ const Login = () => { const navigate = useNavigate();
             // Check if we have user info in the response - newer Django REST framework may include it
             if (response.data.user) {
                 localStorage.setItem('user', JSON.stringify(response.data.user));
-                console.log('User data stored from response:', response.data.user);
                 
                 // Redirect based on user type and setup status
                 if (response.data.user.user_type === 'provider') {
                     if (response.data.user.needs_setup) {
-                        console.log('Redirecting to provider setup');
                         navigate('/provider/setup');
                     } else { 
-                        console.log('Redirecting to provider dashboard');
                         navigate('/provider/dashboard');
                     }
                 } else { 
-                    console.log('Redirecting to services');
                     navigate('/services');
                 }
             } else {
-                // If no user info in response, create a default user and fetch profile after login
-                console.log('No user data in response, creating default user object');
                 
                 // For Django token auth, we can make a follow-up request to get user data
                 try {
@@ -73,14 +64,11 @@ const Login = () => { const navigate = useNavigate();
                     if (userResponse.ok) {
                         const userData = await userResponse.json();
                         localStorage.setItem('user', JSON.stringify(userData));
-                        console.log('User data retrieved from profile endpoint:', userData);
                         
                         // Redirect based on user type
                         if (userData.user_type === 'provider') {
-                            console.log('Redirecting to provider dashboard');
                             navigate('/provider/dashboard');
                         } else {
-                            console.log('Redirecting to services');
                             navigate('/services');
                         }
                     } else {
@@ -91,7 +79,6 @@ const Login = () => { const navigate = useNavigate();
                             user_type: 'consumer' 
                         };
                         localStorage.setItem('user', JSON.stringify(defaultUser));
-                        console.log('Created default user data:', defaultUser);
                         navigate('/services');
                     }
                 } catch (profileError) {

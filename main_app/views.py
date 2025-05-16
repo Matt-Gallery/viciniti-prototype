@@ -1145,12 +1145,44 @@ class ServiceAvailabilityAPI(APIView):
                         # If availability starts before the minimum time, adjust it
                         if start_time_value < min_time:
                             print(f"DEBUG AVAILABILITY: Adjusting today's availability from {start_time} to {min_time}")
-                            start_time = min_time
+                            # Convert min_time (a time object) to a datetime object with the same date as end_time
+                            if isinstance(start_time, datetime.datetime) and isinstance(min_time, datetime.time):
+                                min_datetime = datetime.datetime.combine(
+                                    start_time.date(),
+                                    min_time,
+                                    tzinfo=timezone.get_current_timezone()
+                                )
+                                start_time = min_datetime
+                            else:
+                                start_time = min_time
                         
                         # If the entire availability block is now invalid, skip it
-                        if start_time >= end_time:
-                            print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
-                            continue
+                        # Ensure both are the same type before comparison
+                        if isinstance(start_time, datetime.time) and isinstance(end_time, datetime.datetime):
+                            # Convert start_time to datetime for comparison
+                            start_datetime = datetime.datetime.combine(
+                                end_time.date(),
+                                start_time,
+                                tzinfo=timezone.get_current_timezone()
+                            )
+                            if start_datetime >= end_time:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                        elif isinstance(start_time, datetime.datetime) and isinstance(end_time, datetime.time):
+                            # Convert end_time to datetime for comparison
+                            end_datetime = datetime.datetime.combine(
+                                start_time.date(),
+                                end_time,
+                                tzinfo=timezone.get_current_timezone()
+                            )
+                            if start_time >= end_datetime:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                        else:
+                            # Both are the same type, can compare directly
+                            if start_time >= end_time:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
                     
                     # Calculate how many service slots fit in this availability block
                     duration_minutes = service.duration
@@ -1371,12 +1403,44 @@ class ServiceAvailabilityWithDiscountAPI(APIView):
                         # If availability starts before the minimum time, adjust it
                         if start_time_value < min_time:
                             print(f"DEBUG AVAILABILITY: Adjusting today's availability from {start_time} to {min_time}")
-                            start_time = min_time
+                            # Convert min_time (a time object) to a datetime object with the same date as end_time
+                            if isinstance(start_time, datetime.datetime) and isinstance(min_time, datetime.time):
+                                min_datetime = datetime.datetime.combine(
+                                    start_time.date(),
+                                    min_time,
+                                    tzinfo=timezone.get_current_timezone()
+                                )
+                                start_time = min_datetime
+                            else:
+                                start_time = min_time
                         
                         # If the entire availability block is now invalid, skip it
-                        if start_time >= end_time:
-                            print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
-                            continue
+                        # Ensure both are the same type before comparison
+                        if isinstance(start_time, datetime.time) and isinstance(end_time, datetime.datetime):
+                            # Convert start_time to datetime for comparison
+                            start_datetime = datetime.datetime.combine(
+                                end_time.date(),
+                                start_time,
+                                tzinfo=timezone.get_current_timezone()
+                            )
+                            if start_datetime >= end_time:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                        elif isinstance(start_time, datetime.datetime) and isinstance(end_time, datetime.time):
+                            # Convert end_time to datetime for comparison
+                            end_datetime = datetime.datetime.combine(
+                                start_time.date(),
+                                end_time,
+                                tzinfo=timezone.get_current_timezone()
+                            )
+                            if start_time >= end_datetime:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
+                        else:
+                            # Both are the same type, can compare directly
+                            if start_time >= end_time:
+                                print(f"DEBUG AVAILABILITY: Skipping availability block - no valid time left today")
+                                continue
                     
                     # Calculate how many service slots fit in this availability block
                     duration_minutes = service.duration
@@ -1743,20 +1807,34 @@ class AppointmentListAPI(APIView):
                     }
                     
                     # Get location point from address
-                    location = get_location_from_address(address_components)
-                    
-                    if location:
-                        appointment.location = location
-                        # Also update the simple lat/lng fields for backward compatibility
-                        appointment.latitude = location.y
-                        appointment.longitude = location.x
-                        print(f"DEBUG APPOINTMENT: Geocoded location: {location.y}, {location.x}")
+                    try:
+                        location = get_location_from_address(address_components)
+                        
+                        if location:
+                            appointment.location = location
+                            # Also update the simple lat/lng fields for backward compatibility
+                            appointment.latitude = location.y
+                            appointment.longitude = location.x
+                            print(f"DEBUG APPOINTMENT: Geocoded location: {location.y}, {location.x}")
+                    except Exception as geo_error:
+                        # Log the error but continue without geocoding
+                        print(f"DEBUG APPOINTMENT: Error during geocoding operation: {str(geo_error)}")
+                        # Don't set location if geocoding fails
+                        pass
+                except ImportError as import_err:
+                    # Handle missing geocoding utility
+                    print(f"DEBUG APPOINTMENT: Geocoding utility not available: {str(import_err)}")
                 except Exception as e:
-                    print(f"Error geocoding appointment address: {str(e)}")
+                    # Catch any other errors in the geocoding process
+                    print(f"DEBUG APPOINTMENT: Error initializing geocoding: {str(e)}")
             
-            appointment.save()
-            
-            print(f"DEBUG APPOINTMENT: Successfully created appointment {appointment.id}")
+            # Save the appointment regardless of geocoding success
+            try:
+                appointment.save()
+                print(f"DEBUG APPOINTMENT: Successfully created appointment {appointment.id}")
+            except Exception as save_err:
+                print(f"DEBUG APPOINTMENT: Error saving appointment: {str(save_err)}")
+                raise save_err  # Re-raise to be caught by the outer try-except
             
             return Response({
                 'id': str(appointment.id),  # Convert UUID to string for JSON

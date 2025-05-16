@@ -159,61 +159,61 @@ const ProviderAvailabilityCalendar = ({ onAvailabilityChange,
         }
     }, [initialTimeBlocks]);
 
-    const fetchAppointments = async () => {
-        if (!providerId) {
-            console.log('No provider ID provided, skipping appointment fetch');
-            setLoading(false);
-            return;
-        }
-
-        try {
-            // Debug token and localStorage
-            const token = localStorage.getItem('token');
-            const userStr = localStorage.getItem('user');
-            console.log('Token for appointment fetch:', token ? `${token.substring(0, 5)}...` : 'No token');
-            console.log('User data exists:', !!userStr);
-            
-            if (userStr) {
-                try {
-                    const userData = JSON.parse(userStr);
-                    console.log('User type:', userData.user_type);
-                    console.log('User ID:', userData.id);
-                    console.log('Provider profile exists:', !!userData.provider_profile);
-                } catch (e) {
-                    console.error('Error parsing user data:', e);
-                }
+        const fetchAppointments = async () => {
+            if (!providerId) {
+                console.log('No provider ID provided, skipping appointment fetch');
+                setLoading(false);
+                return;
             }
-            
-            // Make a direct API call with the token
-            console.log(`Making direct API call to /appointments/provider/${providerId}/`);
-            const response = await api.get(`/appointments/provider/${providerId}/`, {
-                headers: {
-                    'Authorization': `Token ${token}`
+
+            try {
+                // Debug token and localStorage
+                const token = localStorage.getItem('token');
+                const userStr = localStorage.getItem('user');
+                console.log('Token for appointment fetch:', token ? `${token.substring(0, 5)}...` : 'No token');
+                console.log('User data exists:', !!userStr);
+                
+                if (userStr) {
+                    try {
+                        const userData = JSON.parse(userStr);
+                        console.log('User type:', userData.user_type);
+                        console.log('User ID:', userData.id);
+                        console.log('Provider profile exists:', !!userData.provider_profile);
+                    } catch (e) {
+                        console.error('Error parsing user data:', e);
+                    }
                 }
-            });
-            
-            console.log('Appointments fetched successfully:', response.data.length);
-            setAppointmentList(response.data);
-            setError(null);
+                
+                // Make a direct API call with the token
+                console.log(`Making direct API call to /appointments/provider/${providerId}/`);
+                const response = await api.get(`/appointments/provider/${providerId}/`, {
+                    headers: {
+                        'Authorization': `Token ${token}`
+                    }
+                });
+                
+                console.log('Appointments fetched successfully:', response.data.length);
+                setAppointmentList(response.data);
+                setError(null);
             
             // Force re-render after appointments are updated
             setRefreshCounter(prev => prev + 1);
-        } catch (err) {
-            console.error('Error fetching appointments:', err);
-            let errorMsg = 'Failed to load appointments';
-            
-            // Add more specific error details if available
-            if (err.response) {
-                errorMsg += `: ${err.response.status} - ${JSON.stringify(err.response.data)}`;
-                console.error('Error response:', err.response.data);
-                console.error('Status code:', err.response.status);
+            } catch (err) {
+                console.error('Error fetching appointments:', err);
+                let errorMsg = 'Failed to load appointments';
+                
+                // Add more specific error details if available
+                if (err.response) {
+                    errorMsg += `: ${err.response.status} - ${JSON.stringify(err.response.data)}`;
+                    console.error('Error response:', err.response.data);
+                    console.error('Status code:', err.response.status);
+                }
+                
+                setError(errorMsg);
+            } finally {
+                setLoading(false);
             }
-            
-            setError(errorMsg);
-        } finally {
-            setLoading(false);
-        }
-    };
+        };
 
     // Directly log the current state of timeBlocks before rendering
     console.log("ProviderAvailabilityCalendar rendering with timeBlocks:", timeBlocks);

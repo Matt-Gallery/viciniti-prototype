@@ -11,7 +11,7 @@ import { Box,
     CardContent,
     Divider,
     Grid,
- } from '@mui/material';
+     } from '@mui/material';
 import { providers, auth, api      } from '../../services/api';
 
 
@@ -125,10 +125,10 @@ const ProviderProfile = () => { const navigate = useNavigate();
             try {
                 // Prepare business profile data
                 const businessData = {
-                    business_name: state.business_name,
-                    business_description: state.business_description,
-                };
-                
+            business_name: state.business_name,
+            business_description: state.business_description,
+        };
+        
                 // Update provider profile using the correct method
                 await providers.updateProfile(businessData);
                 console.log('Business profile updated successfully');
@@ -141,7 +141,7 @@ const ProviderProfile = () => { const navigate = useNavigate();
                 }));
                 return; // Stop the process if updating business profile fails
             }
-        } else {
+            } else {
             try {
                 // Create new provider profile
                 const businessData = {
@@ -158,13 +158,13 @@ const ProviderProfile = () => { const navigate = useNavigate();
                     id: response.data.id,
                     exists: true,
                 }));
-            } catch (error) {
+        } catch (error) {
                 console.error('Error creating business profile:', error);
-                setState(prev => ({
-                    ...prev,
-                    loading: false,
+            setState(prev => ({
+                ...prev,
+                loading: false,
                     error: error.response?.data?.error || 'Failed to create business profile'
-                }));
+            }));
                 return; // Stop the process if creating business profile fails
             }
         }
@@ -172,8 +172,8 @@ const ProviderProfile = () => { const navigate = useNavigate();
         // Then update user info
         try {
             const userData = {
-                email: state.email,
-                phone_number: state.phone_number,
+            email: state.email,
+            phone_number: state.phone_number,
                 // Include structured address fields
                 address_line1: state.address_line1,
                 address_line2: state.address_line2,
@@ -342,7 +342,7 @@ const ProviderProfile = () => { const navigate = useNavigate();
                             {/* Personal Information */}
                             <Typography variant="subtitle1" sx={{ mt: 2 }}>
                                 Personal Information
-                            </Typography>
+                                </Typography>
                             
                             <TextField
                                 fullWidth

@@ -43,7 +43,6 @@ const ConsumerAppointmentCalendar = ({
             try {
                 setLoading(true);
                 const serviceResponse = await services.getById(serviceId);
-                console.log('Service data loaded');
                 setService(serviceResponse.data);
                 setLoading(false);
             } catch (error) {
@@ -58,25 +57,6 @@ const ConsumerAppointmentCalendar = ({
     
     // Handle time slot selection
     const handleBlockClick = (block) => {
-        // DIRECT DEBUG LOG WITH DUMP OF ENTIRE OBJECT CONTENTS
-        console.log('DIRECT DEBUG - EXACT BLOCK OBJECT FROM CALENDAR:');
-        console.dir(block);
-        console.log('DIRECT DEBUG - BLOCK DISCOUNT PROPERTIES:', {
-            hasOwnProperty_originalPrice: block.hasOwnProperty('originalPrice'),
-            hasOwnProperty_discountPercentage: block.hasOwnProperty('discountPercentage'),
-            hasOwnProperty_discountedPrice: block.hasOwnProperty('discountedPrice'),
-            value_originalPrice: block.originalPrice,
-            value_discountPercentage: block.discountPercentage,
-            value_discountedPrice: block.discountedPrice,
-            discountActive: block.discountPercentage > 0
-        });
-        
-        console.log('PRICE DATA FROM CALENDAR:', {
-            originalPrice: block.originalPrice,
-            discountPercentage: block.discountPercentage,
-            discountedPrice: block.discountedPrice
-        });
-        
         setSelectedSlot(block);
         
         // Initialize with empty values
@@ -96,7 +76,6 @@ const ConsumerAppointmentCalendar = ({
         if (userStr) {
             try {
                 const userData = JSON.parse(userStr);
-                console.log('User data from localStorage:', userData);
                 
                 // Set email from user data
                 initialBookingData.email = userData.email || '';
@@ -113,7 +92,6 @@ const ConsumerAppointmentCalendar = ({
                 
                 // If the new fields aren't available, try to parse from the legacy address field
                 if (userData.address && (!userData.street_address && !userData.city)) {
-                    console.log('Parsing from legacy address:', userData.address);
                     const addressLines = userData.address.split(/\n|,/).map(line => line.trim());
                     
                     if (addressLines.length >= 1) {
@@ -146,7 +124,6 @@ const ConsumerAppointmentCalendar = ({
                     }
                 }
                 
-                console.log('Pre-populating form with data:', initialBookingData);
                 setBookingData(initialBookingData);
                 
             } catch (e) {
@@ -154,7 +131,6 @@ const ConsumerAppointmentCalendar = ({
                 setBookingData(initialBookingData);
             }
         } else {
-            console.log('No user data found in localStorage');
             setBookingData(initialBookingData);
         }
         
@@ -220,11 +196,8 @@ const ConsumerAppointmentCalendar = ({
             }
             
             // Get all appointments for this provider's services
-            // This is a simplified check that doesn't apply the buffer time that the backend uses
-            console.log(`Checking for conflicts with provider ${providerId} at time ${startTime.toISOString()} to ${endTime.toISOString()}`);
             
             const response = await appointments.getByProvider(providerId);
-            console.log('Existing provider appointments:', response.data);
             
             // Filter for appointments that overlap with our time slot
             const overlapping = response.data.filter(apt => {
@@ -237,7 +210,6 @@ const ConsumerAppointmentCalendar = ({
                 return (startTime < aptEnd && endTime > aptStart);
             });
             
-            console.log('Potentially conflicting appointments:', overlapping);
             return overlapping;
         } catch (error) {
             console.error('Error checking for conflicting appointments:', error);
@@ -284,24 +256,16 @@ const ConsumerAppointmentCalendar = ({
             setBookingInProgress(true);
             setBookingError('');
             
-            console.log('Creating appointment with slot:', selectedSlot);
-            console.log('Email being submitted:', bookingData.email);
             
             // Create the appointment end time from the slot's end time
             const appointmentEndTime = new Date(selectedSlot.end);
             
             // Check if this slot has buffer information from the backend
             if (selectedSlot.buffer_info) {
-                console.log('Slot includes buffer information:', selectedSlot.buffer_info);
                 
                 // Parse the buffer times
                 const bufferedStart = new Date(selectedSlot.buffer_info.buffered_start);
                 const bufferedEnd = new Date(selectedSlot.buffer_info.buffered_end);
-                
-                console.log('Using buffer information from backend:');
-                console.log(`- Actual slot time: ${selectedSlot.start.toISOString()} to ${selectedSlot.end.toISOString()}`);
-                console.log(`- Buffered time: ${bufferedStart.toISOString()} to ${bufferedEnd.toISOString()}`);
-                console.log(`- Buffer minutes: ${selectedSlot.buffer_info.buffer_minutes}`);
                 
                 // Check for potential conflicts with the buffered time values
                 const conflictingAppointments = await checkForConflicts(
@@ -310,17 +274,11 @@ const ConsumerAppointmentCalendar = ({
                 );
                 
                 if (conflictingAppointments && conflictingAppointments.length > 0) {
-                    console.warn('Potential conflicts detected with buffered times:', conflictingAppointments);
                     
-                    // Log the details of the conflicts
                     conflictingAppointments.forEach(conflict => {
-                        console.warn(`Conflict with appointment ${conflict.id}:`);
-                        console.warn(`- Conflict time: ${new Date(conflict.start_time).toISOString()} to ${new Date(conflict.end_time).toISOString()}`);
-                        console.warn(`- Status: ${conflict.status}`);
                     });
                 }
             } else {
-                console.warn('Slot does not include buffer information from backend');
                 
                 // Check for potential conflicts with non-buffered times
                 const conflictingAppointments = await checkForConflicts(
@@ -375,11 +333,8 @@ const ConsumerAppointmentCalendar = ({
                 appointmentData.discount_reason = 'Proximity discount';
             }
             
-            console.log('Sending appointment data:', JSON.stringify(appointmentData));
-            
             // Call API to create appointment
             const response = await appointments.create(appointmentData);
-            console.log('Appointment created successfully', response.data);
             
             setBookingSuccess(true);
             setBookingInProgress(false);
@@ -402,7 +357,6 @@ const ConsumerAppointmentCalendar = ({
             // Handle conflict errors (HTTP 409)
             if (error.response && error.response.status === 409) {
                 const conflicts = error.response.data.conflict_appointments || [];
-                console.log('Conflicting appointments:', conflicts);
                 
                 const conflictTimes = conflicts.map((conflict) => {
                     const start = new Date(conflict.start_time);

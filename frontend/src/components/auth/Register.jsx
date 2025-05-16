@@ -72,13 +72,30 @@ const Register = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        console.log('Registration form submitted with data:', formData);
         setError(''); // Clear previous errors
         
+        // Validate required address fields for consumers
+        if (formData.user_type === 'consumer') {
+            if (!formData.street_address) {
+                setError('Street Address is required for consumers');
+                return;
+            }
+            if (!formData.city) {
+                setError('City is required for consumers');
+                return;
+            }
+            if (!formData.state) {
+                setError('State is required for consumers');
+                return;
+            }
+            if (!formData.zip_code) {
+                setError('ZIP Code is required for consumers');
+                return;
+            }
+        }
+        
         try {
-            console.log('Sending registration request with data:', JSON.stringify(formData));
             const response = await auth.register(formData);
-            console.log('Registration successful, response:', response.data);
             localStorage.setItem('token', response.data.token);
             localStorage.setItem('user', JSON.stringify(response.data.user));
             
@@ -179,7 +196,7 @@ const Register = () => {
                         />
                         
                         <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>
-                            Address Information
+                            Address Information {formData.user_type === 'consumer' && <span style={{ color: 'red' }}>*</span>}
                         </Typography>
                         
                         <TextField
@@ -189,6 +206,7 @@ const Register = () => {
                             value={formData.street_address}
                             onChange={handleTextChange}
                             margin="normal"
+                            required={formData.user_type === 'consumer'}
                         />
                         
                         <TextField
@@ -209,6 +227,7 @@ const Register = () => {
                                     value={formData.city}
                                     onChange={handleTextChange}
                                     margin="normal"
+                                    required={formData.user_type === 'consumer'}
                                 />
                             </Grid>
                             <Grid item xs={12} sm={3}>
@@ -219,6 +238,7 @@ const Register = () => {
                                     value={formData.state}
                                     onChange={handleTextChange}
                                     margin="normal"
+                                    required={formData.user_type === 'consumer'}
                                 />
                             </Grid>
                             <Grid item xs={12} sm={4}>
@@ -229,6 +249,7 @@ const Register = () => {
                                     value={formData.zip_code}
                                     onChange={handleTextChange}
                                     margin="normal"
+                                    required={formData.user_type === 'consumer'}
                                 />
                             </Grid>
                         </Grid>

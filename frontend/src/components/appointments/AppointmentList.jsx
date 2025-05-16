@@ -65,6 +65,8 @@ const AppointmentList = () => {
             setStatusInProgress(true);
             setUpdatedStatus(newStatus);
             
+            console.log(`Updating appointment ${appointmentId} status to ${newStatus}`);
+            
             // Update the status through the API
             await appointments.updateStatus(appointmentId, newStatus);
             
@@ -84,6 +86,7 @@ const AppointmentList = () => {
             }, 2000);
         } catch (err) {
             console.error('Error updating appointment status:', err);
+            alert(`Failed to update appointment status: ${err.message || 'Unknown error'}`);
             setStatusInProgress(false);
         }
     };

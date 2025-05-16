@@ -55,7 +55,6 @@ const ConsumerProfile = () => {
             try {
                 setLoading(true);
                 const response = await api.get('/auth/profile/');
-                console.log('User profile data:', response.data);
                 setUserData(response.data);
                 setLoading(false);
             } catch (err) {

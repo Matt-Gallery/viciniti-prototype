@@ -183,8 +183,12 @@ export const appointments = {
     update: (id, appointmentData) =>
         api.put(`/appointments/${id}/`, appointmentData),
     
-    updateStatus: (id, status) =>
-        api.patch(`/appointments/${id}/status/`, { status }),
+    updateStatus: (id, status) => {
+        console.log(`Updating appointment ${id} status to ${status}`);
+        // Make sure the ID is a properly formatted string
+        const appointmentId = id.toString();
+        return api.patch(`/appointments/${appointmentId}/status/`, { status });
+    },
     
     delete: (id) =>
         api.delete(`/appointments/${id}/`),

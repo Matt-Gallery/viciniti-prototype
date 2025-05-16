@@ -37,7 +37,6 @@ const AppointmentCalendar = () => {
                     }
                 }
             } catch (err) {
-                console.error('Error initializing user data:', err);
                 setError('Failed to load user data');
             }
         };
@@ -85,7 +84,6 @@ const AppointmentCalendar = () => {
                 setEvents(allEvents);
                 setError(null);
             } catch (err) {
-                console.error('Error fetching calendar data:', err);
                 setError('Failed to load calendar data');
             } finally {
                 setLoading(false);
