@@ -215,15 +215,7 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
             <Typography variant="h4" gutterBottom>
                 Provider Dashboard
             </Typography>
-            <Box sx={{ mb: 2, display: 'flex', gap: 2 }}>
-                <Button
-                    variant="outlined"
-                    color="primary"
-                    onClick={() => navigate('/provider/profile')}
-                >
-                    Manage Profile
-                </Button>
-            </Box>
+            {/* Manage Profile button removed to avoid duplicate with Profile */}
             {error && (
                 <Alert severity="error" sx={{ mb: 2 }}>
                     {error}
@@ -239,8 +231,8 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
             </Box>
             <TabPanel value={tabValue} index={0}>
                 <Box sx={{ display: 'flex', height: 'calc(100vh - 250px)' }}>
-                    {/* Left Column - Service List (1/4 width) */}
-                    <Box sx={{ width: '25%', borderRight: '1px solid rgba(0, 0, 0, 0.12)', pr: 2 }}>
+                    {/* Left Column - Service List (narrower) */}
+                    <Box sx={{ width: '10%', minWidth: '140px', borderRight: '1px solid rgba(0, 0, 0, 0.12)', pr: 1 }}>
                         <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Typography variant="h6">
                                 Your Services
@@ -296,8 +288,8 @@ const ProviderDashboard = () => { const [tabValue, setTabValue] = useState(0);
                             </Box>
                         )}
                     </Box>
-                    { /* Right Column - Service Details or Availability Calendar (3/4 width) */ }
-                    <Box sx={{ width: '75%', pl: 2 }}>
+                    { /* Right Column - Service Details or Availability Calendar */ }
+                    <Box sx={{ width: 'calc(90% - 210px)', pl: 1 }}>
                         { selectedService && !availabilityView ? (
                             <Box>
                                 <Box sx={{ mb: 2 }}>

@@ -1573,17 +1573,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                 {mode === 'consumer' && service && (
                     <div></div>
                 )}
-                {mode === 'provider' && providerId && (
-                    <Button 
-                        variant="contained"
-                        color="primary"
-                        onClick={saveAvailability}
-                        disabled={loading}
-                        size="small"
-                    >
-                        {loading ? <CircularProgress size={20} /> : 'Save Availability'}
-                    </Button>
-                )}
+                {/* Save Availability button removed */}
             </Box>
             {error && (
                 <Alert severity="error" sx={{ mb: 2, py: 1, fontSize: '0.75rem' }}>
@@ -1608,6 +1598,34 @@ const AppointmentCalendar = forwardRef(({ mode,
                     <CircularProgress size={24} />
                 </Box>
             )}
+            
+            {/* Fixed header row to remain visible during vertical scroll */}
+            <Box sx={{ display: 'flex', width: 'max-content', position: 'sticky', top: 0, zIndex: 500 }}>
+                {/* Spacer for time labels column */}
+                <Box sx={{ width: '25px', flexShrink: 0 }} />
+                {days.map((day, index) => (
+                    <Box
+                        key={`fixed-header-${index}`}
+                        sx={{
+                            width: '250px',
+                            minWidth: '250px',
+                            bgcolor: 'primary.main',
+                            color: 'white',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            height: '39px',
+                            borderRight: index < days.length - 1 ? '1px solid rgba(255, 255, 255, 0.2)' : 'none',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                            marginRight: index < days.length - 1 ? '8px' : 0
+                        }}
+                    >
+                        <Typography variant="subtitle2" fontWeight="bold" sx={{ fontSize: '0.8rem' }}>
+                            {format(day, 'EEE, MMM d')}
+                        </Typography>
+                    </Box>
+                ))}
+            </Box>
             
             <Box sx={{ display: 'flex', flexDirection: 'row', flex: 1, overflow: 'hidden', width: '100%' }}>
                 { /* Main scrollable container with time labels and day columns */ }
@@ -1640,7 +1658,7 @@ const AppointmentCalendar = forwardRef(({ mode,
                                 borderBottom: '2px solid rgba(0, 0, 0, 0.1)', 
                                 position: 'sticky',
                                 top: 0,
-                                zIndex: 100,
+                                zIndex: 200,
                                 bgcolor: '#f5f5f5',
                                 boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
                             }}></Box> { /* Match day header height */ }
@@ -1700,12 +1718,12 @@ const AppointmentCalendar = forwardRef(({ mode,
                                            bgcolor: 'primary.main', 
                                            color: 'white', 
                                            borderRadius: '4px 4px 0 0', 
-                                           display: 'flex', 
+                                           display: 'none', /* hide duplicate header */
                                            justifyContent: 'space-between', 
                                            alignItems: 'center', 
                                            position: 'sticky', 
                                            top: 0, 
-                                           zIndex: 10, 
+                                           zIndex: 300, /* ensure always on top */
                                            height: '39px', 
                                            borderBottom: '2px solid rgba(255, 255, 255, 0.2)', 
                                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)' 
