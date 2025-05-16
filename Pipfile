@@ -16,6 +16,7 @@ gunicorn = "*"
 dj-database-url = "*"
 bleach = "*"
 geopy = "*"
+bleach = "*"
 
 [dev-packages]
 
