@@ -57,6 +57,18 @@ export const auth = {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
     },
+
+    deleteAccount: async () => {
+        try {
+            const response = await api.delete('/auth/profile/');
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            return response;
+        } catch (error) {
+            console.error('Delete account error:', error);
+            throw error;
+        }
+    },
 };
 
 export const services = {

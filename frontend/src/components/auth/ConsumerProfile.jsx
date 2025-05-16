@@ -25,6 +25,7 @@ const ConsumerProfile = () => {
     const [success, setSuccess] = useState('');
     const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
     const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     
     // User profile data
     const [userData, setUserData] = useState({
@@ -223,20 +224,13 @@ const ConsumerProfile = () => {
     const handleDeleteAccount = async () => {
         try {
             setLoading(true);
-            setError('');
-            
-            // Call an API to delete the user account
-            // Note: You'll need to implement this endpoint on the backend
-            await api.delete('/auth/profile/');
-            
-            // Clear user data and redirect to login
-            auth.logout();
+            await auth.deleteAccount();
+            setDeleteDialogOpen(false);
             navigate('/login');
         } catch (err) {
             console.error('Error deleting account:', err);
-            setError(err.response?.data?.error || 'Failed to delete account');
+            setError('Failed to delete account. Please try again.');
             setLoading(false);
-            setConfirmDialogOpen(false);
         }
     };
     
@@ -249,8 +243,10 @@ const ConsumerProfile = () => {
     }
     
     return (
-        <Box sx={{ maxWidth: 800, mx: 'auto' }}>
-            <Typography variant="h4" gutterBottom>Your Profile</Typography>
+        <Box sx={{ maxWidth: 800, mx: 'auto', p: 3 }}>
+            <Typography variant="h4" gutterBottom>
+                Profile Settings
+            </Typography>
             
             {error && (
                 <Alert severity="error" sx={{ mb: 2 }}>
@@ -264,208 +260,225 @@ const ConsumerProfile = () => {
                 </Alert>
             )}
             
-            <Paper sx={{ p: 3, mb: 4 }}>
-                <Typography variant="h6" gutterBottom>Account Information</Typography>
-                <Grid container spacing={2}>
-                    <Grid item xs={12}>
-                        <TextField
-                            label="Username"
-                            value={userData.username}
-                            fullWidth
-                            disabled
-                            margin="normal"
-                        />
-                    </Grid>
-                    <Grid item xs={12}>
-                        <TextField
-                            label="Email"
-                            name="email"
-                            value={userData.email}
-                            onChange={handleInputChange}
-                            fullWidth
-                            required
-                            margin="normal"
-                            error={!!fieldErrors.email}
-                            helperText={fieldErrors.email}
-                        />
-                    </Grid>
-                    <Grid item xs={12}>
-                        <TextField
-                            label="Phone Number"
-                            name="phone_number"
-                            value={userData.phone_number || ''}
-                            onChange={handleInputChange}
-                            fullWidth
-                            margin="normal"
-                            error={!!fieldErrors.phone_number}
-                            helperText={fieldErrors.phone_number}
-                        />
-                    </Grid>
-                </Grid>
-                
-                <Box sx={{ mt: 2, mb: 2 }}>
-                    <Button 
-                        variant="outlined" 
-                        color="primary" 
-                        onClick={() => setPasswordDialogOpen(true)}
-                    >
-                        Change Password
-                    </Button>
+            {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                    <CircularProgress />
                 </Box>
-            </Paper>
-            
-            <Paper sx={{ p: 3, mb: 4 }}>
-                <Typography variant="h6" gutterBottom>Address Information</Typography>
-                <Grid container spacing={2}>
-                    <Grid item xs={12}>
-                        <TextField
-                            label="Street Address"
-                            name="street_address"
-                            value={userData.street_address || ''}
-                            onChange={handleInputChange}
-                            fullWidth
-                            margin="normal"
-                        />
-                    </Grid>
-                    <Grid item xs={12}>
-                        <TextField
-                            label="Apartment/Suite/Unit (Optional)"
-                            name="apartment"
-                            value={userData.apartment || ''}
-                            onChange={handleInputChange}
-                            fullWidth
-                            margin="normal"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={6}>
-                        <TextField
-                            label="City"
-                            name="city"
-                            value={userData.city || ''}
-                            onChange={handleInputChange}
-                            fullWidth
-                            margin="normal"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={3}>
-                        <TextField
-                            label="State"
-                            name="state"
-                            value={userData.state || ''}
-                            onChange={handleInputChange}
-                            fullWidth
-                            margin="normal"
-                        />
-                    </Grid>
-                    <Grid item xs={12} md={3}>
-                        <TextField
-                            label="ZIP Code"
-                            name="zip_code"
-                            value={userData.zip_code || ''}
-                            onChange={handleInputChange}
-                            fullWidth
-                            margin="normal"
-                        />
-                    </Grid>
-                </Grid>
-            </Paper>
-            
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
-                <Button 
-                    variant="contained" 
-                    color="primary" 
-                    onClick={handleSaveProfile}
-                    disabled={loading}
-                >
-                    {loading ? <CircularProgress size={24} /> : 'Save Changes'}
-                </Button>
-                
-                <Button 
-                    variant="outlined" 
-                    color="error" 
-                    onClick={() => setConfirmDialogOpen(true)}
-                >
-                    Delete Account
-                </Button>
-            </Box>
-            
-            {/* Password Change Dialog */}
-            <Dialog open={passwordDialogOpen} onClose={() => setPasswordDialogOpen(false)}>
-                <DialogTitle>Change Your Password</DialogTitle>
-                <DialogContent>
-                    <DialogContentText sx={{ mb: 2 }}>
-                        Please enter your current password and a new password to continue.
-                    </DialogContentText>
-                    <TextField
-                        label="Current Password"
-                        name="current_password"
-                        type="password"
-                        value={passwordData.current_password}
-                        onChange={handlePasswordChange}
-                        fullWidth
-                        margin="normal"
-                        required
-                        error={!!passwordErrors.current_password}
-                        helperText={passwordErrors.current_password}
-                    />
-                    <TextField
-                        label="New Password"
-                        name="new_password"
-                        type="password"
-                        value={passwordData.new_password}
-                        onChange={handlePasswordChange}
-                        fullWidth
-                        margin="normal"
-                        required
-                        error={!!passwordErrors.new_password}
-                        helperText={passwordErrors.new_password}
-                    />
-                    <TextField
-                        label="Confirm New Password"
-                        name="confirm_password"
-                        type="password"
-                        value={passwordData.confirm_password}
-                        onChange={handlePasswordChange}
-                        fullWidth
-                        margin="normal"
-                        required
-                        error={!!passwordErrors.confirm_password}
-                        helperText={passwordErrors.confirm_password}
-                    />
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setPasswordDialogOpen(false)}>Cancel</Button>
-                    <Button 
-                        onClick={handleChangePassword} 
-                        variant="contained" 
-                        color="primary"
-                        disabled={loading}
+            ) : (
+                <>
+                    <Paper sx={{ p: 3, mb: 3 }}>
+                        <Typography variant="h6" gutterBottom>
+                            Personal Information
+                        </Typography>
+                        <Grid container spacing={2}>
+                            <Grid item xs={12}>
+                                <TextField
+                                    label="Username"
+                                    value={userData.username}
+                                    fullWidth
+                                    disabled
+                                    margin="normal"
+                                />
+                            </Grid>
+                            <Grid item xs={12}>
+                                <TextField
+                                    label="Email"
+                                    name="email"
+                                    value={userData.email}
+                                    onChange={handleInputChange}
+                                    fullWidth
+                                    required
+                                    margin="normal"
+                                    error={!!fieldErrors.email}
+                                    helperText={fieldErrors.email}
+                                />
+                            </Grid>
+                            <Grid item xs={12}>
+                                <TextField
+                                    label="Phone Number"
+                                    name="phone_number"
+                                    value={userData.phone_number || ''}
+                                    onChange={handleInputChange}
+                                    fullWidth
+                                    margin="normal"
+                                    error={!!fieldErrors.phone_number}
+                                    helperText={fieldErrors.phone_number}
+                                />
+                            </Grid>
+                        </Grid>
+                    </Paper>
+
+                    <Paper sx={{ p: 3, mb: 3 }}>
+                        <Typography variant="h6" gutterBottom>
+                            Account Settings
+                        </Typography>
+                        <Box sx={{ mt: 2 }}>
+                            <Button
+                                variant="outlined"
+                                color="primary"
+                                onClick={() => setPasswordDialogOpen(true)}
+                                sx={{ mr: 2 }}
+                            >
+                                Change Password
+                            </Button>
+                        </Box>
+                    </Paper>
+
+                    <Paper sx={{ p: 3, mb: 4 }}>
+                        <Typography variant="h6" gutterBottom>Address Information</Typography>
+                        <Grid container spacing={2}>
+                            <Grid item xs={12}>
+                                <TextField
+                                    label="Street Address"
+                                    name="street_address"
+                                    value={userData.street_address || ''}
+                                    onChange={handleInputChange}
+                                    fullWidth
+                                    margin="normal"
+                                />
+                            </Grid>
+                            <Grid item xs={12}>
+                                <TextField
+                                    label="Apartment/Suite/Unit (Optional)"
+                                    name="apartment"
+                                    value={userData.apartment || ''}
+                                    onChange={handleInputChange}
+                                    fullWidth
+                                    margin="normal"
+                                />
+                            </Grid>
+                            <Grid item xs={12} md={6}>
+                                <TextField
+                                    label="City"
+                                    name="city"
+                                    value={userData.city || ''}
+                                    onChange={handleInputChange}
+                                    fullWidth
+                                    margin="normal"
+                                />
+                            </Grid>
+                            <Grid item xs={12} md={3}>
+                                <TextField
+                                    label="State"
+                                    name="state"
+                                    value={userData.state || ''}
+                                    onChange={handleInputChange}
+                                    fullWidth
+                                    margin="normal"
+                                />
+                            </Grid>
+                            <Grid item xs={12} md={3}>
+                                <TextField
+                                    label="ZIP Code"
+                                    name="zip_code"
+                                    value={userData.zip_code || ''}
+                                    onChange={handleInputChange}
+                                    fullWidth
+                                    margin="normal"
+                                />
+                            </Grid>
+                        </Grid>
+                    </Paper>
+
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
+                        <Button 
+                            variant="contained" 
+                            color="primary" 
+                            onClick={handleSaveProfile}
+                            disabled={loading}
+                            sx={{ mr: 2 }}
+                        >
+                            {loading ? <CircularProgress size={24} /> : 'Save Changes'}
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            color="error"
+                            onClick={() => setDeleteDialogOpen(true)}
+                        >
+                            Delete Account
+                        </Button>
+                    </Box>
+
+                    {/* Password Change Dialog */}
+                    <Dialog open={passwordDialogOpen} onClose={() => setPasswordDialogOpen(false)}>
+                        <DialogTitle>Change Your Password</DialogTitle>
+                        <DialogContent>
+                            <DialogContentText sx={{ mb: 2 }}>
+                                Please enter your current password and a new password to continue.
+                            </DialogContentText>
+                            <TextField
+                                label="Current Password"
+                                name="current_password"
+                                type="password"
+                                value={passwordData.current_password}
+                                onChange={handlePasswordChange}
+                                fullWidth
+                                margin="normal"
+                                required
+                                error={!!passwordErrors.current_password}
+                                helperText={passwordErrors.current_password}
+                            />
+                            <TextField
+                                label="New Password"
+                                name="new_password"
+                                type="password"
+                                value={passwordData.new_password}
+                                onChange={handlePasswordChange}
+                                fullWidth
+                                margin="normal"
+                                required
+                                error={!!passwordErrors.new_password}
+                                helperText={passwordErrors.new_password}
+                            />
+                            <TextField
+                                label="Confirm New Password"
+                                name="confirm_password"
+                                type="password"
+                                value={passwordData.confirm_password}
+                                onChange={handlePasswordChange}
+                                fullWidth
+                                margin="normal"
+                                required
+                                error={!!passwordErrors.confirm_password}
+                                helperText={passwordErrors.confirm_password}
+                            />
+                        </DialogContent>
+                        <DialogActions>
+                            <Button onClick={() => setPasswordDialogOpen(false)}>Cancel</Button>
+                            <Button 
+                                onClick={handleChangePassword} 
+                                variant="contained" 
+                                color="primary"
+                                disabled={loading}
+                            >
+                                {loading ? <CircularProgress size={24} /> : 'Change Password'}
+                            </Button>
+                        </DialogActions>
+                    </Dialog>
+
+                    {/* Delete Account Confirmation Dialog */}
+                    <Dialog
+                        open={deleteDialogOpen}
+                        onClose={() => setDeleteDialogOpen(false)}
                     >
-                        {loading ? <CircularProgress size={24} /> : 'Change Password'}
-                    </Button>
-                </DialogActions>
-            </Dialog>
-            
-            {/* Delete Account Confirmation Dialog */}
-            <Dialog open={confirmDialogOpen} onClose={() => setConfirmDialogOpen(false)}>
-                <DialogTitle>Delete Your Account?</DialogTitle>
-                <DialogContent>
-                    <DialogContentText>
-                        This action cannot be undone. All your data, including appointments and profile information will be permanently deleted.
-                    </DialogContentText>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setConfirmDialogOpen(false)}>Cancel</Button>
-                    <Button 
-                        onClick={handleDeleteAccount} 
-                        variant="contained" 
-                        color="error"
-                        disabled={loading}
-                    >
-                        {loading ? <CircularProgress size={24} /> : 'Delete Account'}
-                    </Button>
-                </DialogActions>
-            </Dialog>
+                        <DialogTitle>Delete Account</DialogTitle>
+                        <DialogContent>
+                            <DialogContentText>
+                                Are you sure you want to delete your account? This action cannot be undone.
+                                All your data, including appointments and profile information, will be permanently deleted.
+                            </DialogContentText>
+                        </DialogContent>
+                        <DialogActions>
+                            <Button onClick={() => setDeleteDialogOpen(false)}>
+                                Cancel
+                            </Button>
+                            <Button onClick={handleDeleteAccount} color="error" variant="contained">
+                                Delete Account
+                            </Button>
+                        </DialogActions>
+                    </Dialog>
+                </>
+            )}
         </Box>
     );
 };
