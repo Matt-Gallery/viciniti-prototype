@@ -1,145 +1,116 @@
-# Viciniti
-A platform that matches service consumers with providers, facilitating efficient delivery scheduling and cost savings through proximity-based discounts.
-## Overview
-Viciniti optimizes service delivery by grouping appointments geographically, offering dynamic discounts based on proximity to existing bookings. This creates a win-win scenario where providers reduce delivery costs while consumers enjoy better pricing.
-## Features
+# Viciniti - Local Service Provider Platform
+
+Viciniti is a full-stack web application that connects local service providers with consumers, featuring real-time availability management, appointment scheduling, and location-based services.
+
+## 🌟 Features
+
 ### For Consumers
-- **Authentication & Profile Management**
-  - User registration with role selection
-  - Secure login/logout
-  - Profile management
-  - Address management with geocoding
-  - Password management
-  - Delete Profile
-- **Service Discovery & Booking**
-  - Browse services by categories
-  - Service details and pricing
-  - Provider information
-  - Interactive booking calendar
-  - Real-time availability
-  - Proximity-based discounts
-  - Appointment management
-- **Appointment Management**
-  - View all appointments
-  - Detailed appointment information
-  - Cancel/reschedule functionality
-  - Appointment history
-  - Confirmation notifications
-- **Smart Discount System**
-  - Dynamic pricing based on location
-  - Four-tier discount structure:
-    - Tier 1 (0-200 yards): 15-35% off
-    - Tier 2 (200-600 yards): 12-24% off
-    - Tier 3 (600 yards - 1 mile): 10-14% off
-    - Tier 4 (1-3 miles): 5-9% off
-  - Scaling discounts with nearby appointments
-  - Real-time price calculations
+- User registration and profile management
+- Browse local service providers
+- View provider availability in real-time
+- Book and manage appointments
+- Location-based service discovery
+- Business discount system for nearby services
+- Appointment history and status tracking
+
 ### For Service Providers
-- **Provider Dashboard**
-  - Business profile management
-  - Service management
-  - Availability control
-  - Appointment calendar
-  - Customer management
-- **Service Management**
-  - Create/edit/delete services
-  - Pricing and duration settings
-  - Category management
-  - Availability control
-- **Availability Management**
-  - Working hours configuration
-  - Time blocking
-  - Buffer time management
-  - Slot management
-- **Discount Configuration**
-  - Toggle proximity discounts
-  - Distance tier settings
-  - Discount percentage configuration
-  - Appointment count scaling
-  - Real-time preview
-### Backend
-- Django
-- Django REST Framework
-- PostgreSQL with PostGIS
-- GeoDjango for spatial queries
+- Provider registration and business profile setup
+- Service management (create, edit, delete)
+- Real-time availability management
+- Appointment scheduling and management
+- Business hours configuration
+- Location-based pricing and discounts
+- Customer management
+
+## 🏗️ Tech Stack
+
 ### Frontend
-- React
-- Material-UI
+- React.js with Material-UI
 - Redux for state management
 - React Router for navigation
-### Key Technical Features
-- **Geospatial Integration**
-  - Address geocoding
-  - Distance calculations
-  - Proximity-based matching
-  - Location-based discovery
-- **Real-time Updates**
-  - Live availability
-  - Dynamic pricing
-  - Instant confirmations
-  - Calendar synchronization
-- **Security**
-  - Role-based access control
-  - Secure authentication
-  - Data encryption
-  - Protected API endpoints
-## API Endpoints
-### Authentication
-| Route | Method | Description | Access |
-|-------|--------|-------------|--------|
-| `/api/signup` | POST | Create new user | Public |
-| `/api/login` | POST | Authenticate user | Public |
-| `/api/logout` | POST | Log out user | Authenticated |
-| `/api/user` | POST | Complete provider profile | Authenticated |
-### Services
-| Route | Method | Description | Access |
-|-------|--------|-------------|--------|
-| `/api/services` | GET | List all services | Authenticated |
-| `/api/services` | POST | Create service | Provider |
-| `/api/services/:id` | PUT | Update service | Provider |
-| `/api/services/:id` | DELETE | Delete service | Provider |
-### Appointments
-| Route | Method | Description | Access |
-|-------|--------|-------------|--------|
-| `/api/appointments` | GET | List appointments | Authenticated |
-| `/api/appointments` | POST | Book appointment | Customer |
-| `/api/appointments/:id` | PUT | Update appointment | Customer |
-| `/api/appointments/:id` | DELETE | Cancel appointment | Customer |
-| `/api/appointments/available` | GET | Check availability | Customer |
-## Getting Started
-1. Clone the repository
-```bash
-git clone https://github.com/Matt-Gallery/viciniti-prototype.git
+- Axios for API communication
+- Leaflet for maps integration
+
+### Backend
+- Django REST Framework
+- PostgreSQL with PostGIS for geospatial data
+- Django Authentication System
+- GeoDjango for location services
+- RESTful API architecture
+
+## 📦 Project Structure
+
 ```
-2. Install dependencies
-```bash
-# Backend
-cd viciniti-prototype
-pip install -r requirements.txt
-# Frontend
-cd frontend
-npm install
+viciniti/
+├── frontend/                 # React frontend application
+│   ├── public/              # Static files
+│   └── src/
+│       ├── components/      # React components
+│       │   ├── auth/       # Authentication components
+│       │   ├── provider/   # Provider-specific components
+│       │   └── shared/     # Shared components
+│       ├── services/       # API services
+│       └── utils/          # Utility functions
+│
+├── main_app/                # Django main application
+│   ├── models.py           # Database models
+│   ├── views.py            # View logic
+│   ├── serializers.py      # API serializers
+│   └── utils/              # Utility functions
+│
+└── viciniti/               # Django project settings
+    ├── settings.py         # Project settings
+    └── urls.py            # URL configuration
 ```
-3. Set up environment variables
-```bash
-cp .env.example .env
-# Edit .env with your configuration
+
+
 ```
-4. Run the development servers
-```bash
-# Backend
-python manage.py runserver
-# Frontend
-cd frontend
-npm start
-```
-## Contributing
+
+## 📚 API Documentation
+
+### Authentication Endpoints
+- `POST /api/auth/register/` - User registration
+- `POST /api/auth/login/` - User login
+- `GET /api/auth/profile/` - Get user profile
+- `PUT /api/auth/profile/` - Update user profile
+- `DELETE /api/auth/profile/` - Delete user account
+
+### Provider Endpoints
+- `GET /api/providers/` - List providers
+- `POST /api/provider/setup/` - Setup provider profile
+- `GET /api/provider/profile/` - Get provider profile
+- `PUT /api/provider/profile/` - Update provider profile
+
+### Service Endpoints
+- `GET /api/services/` - List services
+- `POST /api/services/create/` - Create service
+- `PUT /api/services/{id}/` - Update service
+- `DELETE /api/services/{id}/` - Delete service
+
+### Appointment Endpoints
+- `GET /api/appointments/` - List appointments
+- `POST /api/appointments/` - Create appointment
+- `PUT /api/appointments/{id}/` - Update appointment
+- `DELETE /api/appointments/{id}/` - Delete appointment
+
+## 🤝 Contributing
+
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-## License
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## 📄 License
+
 This project is licensed under the MIT License - see the LICENSE file for details.
-## Contact
-Project Link: [https://github.com/Matt-Gallery/viciniti-prototype](https://github.com/Matt-Gallery/viciniti-prototype)
+
+## 👥 Authors
+
+- Your Name - Initial work
+
+## 🙏 Acknowledgments
+
+- Material-UI for the frontend components
+- Django REST Framework for the backend API
+- PostGIS for geospatial functionality
