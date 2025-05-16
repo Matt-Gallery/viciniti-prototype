@@ -33,6 +33,7 @@ Viciniti is a full-stack web application that connects local service providers w
 - GDAL (Geospatial Data Abstraction Library) for geocoding
 - PostGIS/SpatiaLite - Spatial database extensions
 - psycopg2-binary - PostgreSQL adapter
+- GeoPY for geocoding
 - RESTful API architecture
 ## :package: Project Structure
 ```
