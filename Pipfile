@@ -8,8 +8,8 @@ django-cors-headers = "*"
 django = "*"
 psycopg2-binary = "*"
 djangorestframework = "*"
-bleach = "*"
 geopy = "*"
+bleach = "*"
 
 [dev-packages]
 
