@@ -7,6 +7,8 @@ from django.utils import timezone
 from django.db.models import Q
 from django.utils.dateparse import parse_datetime
 from django.core.serializers.json import DjangoJSONEncoder
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 import json
 import uuid
 import datetime
@@ -807,8 +809,14 @@ class PasswordChangeAPI(APIView):
         try:
             validate_password(new_password, user)
         except ValidationError as e:
+            # Convert the validation error (can be a list or string) to a string message
+            if hasattr(e, 'messages'):
+                error_message = ', '.join(e.messages)
+            else:
+                error_message = str(e)
+                
             return Response({
-                'error': str(e)
+                'error': error_message
             }, http_status.HTTP_400_BAD_REQUEST)
         
         # Set new password

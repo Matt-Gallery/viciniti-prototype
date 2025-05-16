@@ -12,6 +12,8 @@ const ProviderAvailabilityCalendar = ({ onAvailabilityChange,
     const [timeBlocks, setTimeBlocks] = useState({});
     const timeBlocksRef = useRef(timeBlocks);
     const firstRenderRef = useRef(true);
+    // Add a refresh counter to force re-renders
+    const [refreshCounter, setRefreshCounter] = useState(0);
 
     // Initialize timeBlocks once when component mounts or initialTimeBlocks changes
     useEffect(() => {
@@ -27,12 +29,33 @@ const ProviderAvailabilityCalendar = ({ onAvailabilityChange,
         console.log("ProviderAvailabilityCalendar: timeBlocks state updated:", timeBlocks);
     }, [timeBlocks]);
 
+    // Set up a regular refresh interval for appointments
+    useEffect(() => {
+        if (!providerId) return;
+        
+        // Initial load
+        fetchAppointments();
+        
+        // Set up interval to refresh every 10 seconds
+        const intervalId = setInterval(() => {
+            console.log("ProviderAvailabilityCalendar: Running scheduled refresh");
+            fetchAppointments();
+            // Increment refresh counter to force re-render
+            setRefreshCounter(prev => prev + 1);
+        }, 10000); // 10 seconds
+        
+        return () => clearInterval(intervalId);
+    }, [providerId]);
+
     // Use a callback for handling availability changes to avoid recreating the function
     const handleAvailabilityChange = useCallback((newAvailability) => {
         console.log("ProviderAvailabilityCalendar: received new availability from calendar:", newAvailability);
         
         // Update local state
         setTimeBlocks(newAvailability);
+        
+        // Increment refresh counter to force re-render
+        setRefreshCounter(prev => prev + 1);
         
         // Pass changes to parent
         if (onAvailabilityChange) {
@@ -87,6 +110,9 @@ const ProviderAvailabilityCalendar = ({ onAvailabilityChange,
                 JSON.stringify(Object.keys(timeBlocks).sort())) {
                 console.log("ProviderAvailabilityCalendar: Updating state with API response", formattedData);
                 setTimeBlocks(formattedData);
+                
+                // Force re-render
+                setRefreshCounter(prev => prev + 1);
             }
             
         } catch (err) {
@@ -127,72 +153,75 @@ const ProviderAvailabilityCalendar = ({ onAvailabilityChange,
             if (needsUpdate) {
                 console.log("ProviderAvailabilityCalendar: Updating timeBlocks from prop change");
                 setTimeBlocks(initialTimeBlocks);
+                // Increment refresh counter to force re-render
+                setRefreshCounter(prev => prev + 1);
             }
         }
     }, [initialTimeBlocks]);
 
-    useEffect(() => {
-        const fetchAppointments = async () => {
-            if (!providerId) {
-                console.log('No provider ID provided, skipping appointment fetch');
-                setLoading(false);
-                return;
-            }
+    const fetchAppointments = async () => {
+        if (!providerId) {
+            console.log('No provider ID provided, skipping appointment fetch');
+            setLoading(false);
+            return;
+        }
 
-            try {
-                // Debug token and localStorage
-                const token = localStorage.getItem('token');
-                const userStr = localStorage.getItem('user');
-                console.log('Token for appointment fetch:', token ? `${token.substring(0, 5)}...` : 'No token');
-                console.log('User data exists:', !!userStr);
-                
-                if (userStr) {
-                    try {
-                        const userData = JSON.parse(userStr);
-                        console.log('User type:', userData.user_type);
-                        console.log('User ID:', userData.id);
-                        console.log('Provider profile exists:', !!userData.provider_profile);
-                    } catch (e) {
-                        console.error('Error parsing user data:', e);
-                    }
+        try {
+            // Debug token and localStorage
+            const token = localStorage.getItem('token');
+            const userStr = localStorage.getItem('user');
+            console.log('Token for appointment fetch:', token ? `${token.substring(0, 5)}...` : 'No token');
+            console.log('User data exists:', !!userStr);
+            
+            if (userStr) {
+                try {
+                    const userData = JSON.parse(userStr);
+                    console.log('User type:', userData.user_type);
+                    console.log('User ID:', userData.id);
+                    console.log('Provider profile exists:', !!userData.provider_profile);
+                } catch (e) {
+                    console.error('Error parsing user data:', e);
                 }
-                
-                // Make a direct API call with the token
-                console.log(`Making direct API call to /appointments/provider/${providerId}/`);
-                const response = await api.get(`/appointments/provider/${providerId}/`, {
-                    headers: {
-                        'Authorization': `Token ${token}`
-                    }
-                });
-                
-                console.log('Appointments fetched successfully:', response.data.length);
-                setAppointmentList(response.data);
-                setError(null);
-            } catch (err) {
-                console.error('Error fetching appointments:', err);
-                let errorMsg = 'Failed to load appointments';
-                
-                // Add more specific error details if available
-                if (err.response) {
-                    errorMsg += `: ${err.response.status} - ${JSON.stringify(err.response.data)}`;
-                    console.error('Error response:', err.response.data);
-                    console.error('Status code:', err.response.status);
-                }
-                
-                setError(errorMsg);
-            } finally {
-                setLoading(false);
             }
-        };
-
-        fetchAppointments();
-    }, [providerId]);
+            
+            // Make a direct API call with the token
+            console.log(`Making direct API call to /appointments/provider/${providerId}/`);
+            const response = await api.get(`/appointments/provider/${providerId}/`, {
+                headers: {
+                    'Authorization': `Token ${token}`
+                }
+            });
+            
+            console.log('Appointments fetched successfully:', response.data.length);
+            setAppointmentList(response.data);
+            setError(null);
+            
+            // Force re-render after appointments are updated
+            setRefreshCounter(prev => prev + 1);
+        } catch (err) {
+            console.error('Error fetching appointments:', err);
+            let errorMsg = 'Failed to load appointments';
+            
+            // Add more specific error details if available
+            if (err.response) {
+                errorMsg += `: ${err.response.status} - ${JSON.stringify(err.response.data)}`;
+                console.error('Error response:', err.response.data);
+                console.error('Status code:', err.response.status);
+            }
+            
+            setError(errorMsg);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // Directly log the current state of timeBlocks before rendering
     console.log("ProviderAvailabilityCalendar rendering with timeBlocks:", timeBlocks);
+    console.log("ProviderAvailabilityCalendar refresh counter:", refreshCounter);
     
     return (
         <AppointmentCalendar
+            key={`provider-calendar-${refreshCounter}`} // Add key to force complete re-render
             mode="provider"
             providerId={providerId}
             onAvailabilityChange={handleAvailabilityChange}

@@ -11,14 +11,16 @@ import { Box,
     CardContent,
     Divider,
     Grid,
-    Tabs,
-    Tab,
-     } from '@mui/material';
-import { providers, auth      } from '../../services/api';
+ } from '@mui/material';
+import { providers, auth, api      } from '../../services/api';
 
 
 const ProviderProfile = () => { const navigate = useNavigate();
-    const [state, setState] = useState({});
+    const [state, setState] = useState({
+        loading: false,
+        error: '',
+        exists: false
+    });
 
     useEffect(() => { fetchData();
      }, []);
@@ -33,11 +35,35 @@ const ProviderProfile = () => { const navigate = useNavigate();
             
             if (userString) {
                 userData = JSON.parse(userString);
+                // Parse address into components if it exists as a single string
+                let addressComponents = {
+                    address_line1: '',
+                    address_line2: '',
+                    city: '',
+                    state: '',
+                    zip_code: ''
+                };
+                
+                // Check if we have structured address fields
+                if (userData.address_line1) {
+                    addressComponents = {
+                        address_line1: userData.address_line1 || '',
+                        address_line2: userData.address_line2 || '',
+                        city: userData.city || '',
+                        state: userData.state || '',
+                        zip_code: userData.zip_code || ''
+                    };
+                }
+                // If only legacy address exists, leave address components empty
+                
                 setState(prev => ({
                     ...prev,
                     email: userData.email || '',
                     phone_number: userData.phone_number || '',
+                    // Keep the legacy address field for compatibility
                     address: userData.address || '',
+                    // New structured address fields
+                    ...addressComponents
                 }));
             }
             
@@ -90,84 +116,100 @@ const ProviderProfile = () => { const navigate = useNavigate();
         }));
     };
 
-    const handleTabChange = (_event, newValue) => {
-        setState(prev => ({
-            ...prev,
-            activeTab: newValue,
-            error: ''
-        }));
-    };
-
-    const handleBusinessSubmit = async (e) => {
+    const handleUserInfoSubmit = async (e) => {
         e.preventDefault();
-        setState(prev => ({ ...prev, loading: true, error: '' }));
+        setState(prev => ({ ...prev, loading: true, error: '', success: '' }));
         
-        const data = {
-            business_name: state.business_name,
-            business_description: state.business_description,
-        };
-        
-        try {
-            if (state.exists) {
-                // Update existing profile
-                await providers.update(state.id, data);
+        // First, update provider profile if it exists
+        if (state.exists) {
+            try {
+                // Prepare business profile data
+                const businessData = {
+                    business_name: state.business_name,
+                    business_description: state.business_description,
+                };
+                
+                // Update provider profile using the correct method
+                await providers.updateProfile(businessData);
+                console.log('Business profile updated successfully');
+            } catch (error) {
+                console.error('Error updating business profile:', error);
                 setState(prev => ({
                     ...prev,
                     loading: false,
-                    editMode: false,
-                    success: 'Provider profile updated successfully'
+                    error: error.response?.data?.error || 'Failed to update business profile'
                 }));
-            } else {
-                // Create new profile
-                const response = await providers.setup(data);
+                return; // Stop the process if updating business profile fails
+            }
+        } else {
+            try {
+                // Create new provider profile
+                const businessData = {
+                    business_name: state.business_name,
+                    business_description: state.business_description,
+                };
+                
+                // Setup new provider profile
+                const response = await providers.setup(businessData);
+                console.log('Provider profile created:', response.data);
+                
                 setState(prev => ({
                     ...prev,
                     id: response.data.id,
-                    loading: false,
-                    editMode: false,
                     exists: true,
-                    success: 'Provider profile created successfully'
                 }));
+            } catch (error) {
+                console.error('Error creating business profile:', error);
+                setState(prev => ({
+                    ...prev,
+                    loading: false,
+                    error: error.response?.data?.error || 'Failed to create business profile'
+                }));
+                return; // Stop the process if creating business profile fails
             }
-        } catch (error) {
-            console.error('Error saving provider profile');
-            setState(prev => ({
-                ...prev,
-                loading: false,
-                error: error.response?.data?.error || 'Failed to save provider profile'
-            }));
         }
-    };
-
-    const handleUserInfoSubmit = async (e) => {
-        e.preventDefault();
-        setState(prev => ({ ...prev, loading: true, error: '' }));
         
-        const data = {
-            email: state.email,
-            phone_number: state.phone_number,
-            address: state.address,
-        };
-        
+        // Then update user info
         try {
+            const userData = {
+                email: state.email,
+                phone_number: state.phone_number,
+                // Include structured address fields
+                address_line1: state.address_line1,
+                address_line2: state.address_line2,
+                city: state.city,
+                state: state.state,
+                zip_code: state.zip_code
+            };
+            
             // Call API to update user info
-            const response = await providers.updateUserInfo(data);
+            const response = await providers.updateUserInfo(userData);
             
             // Update localStorage
             const userString = localStorage.getItem('user');
             if (userString) {
-                const userData = JSON.parse(userString);
-                const updatedUser = { ...userData, ...data };
+                const oldUserData = JSON.parse(userString);
+                // Merge the user data properly
+                const updatedUser = { 
+                    ...oldUserData, 
+                    email: userData.email,
+                    phone_number: userData.phone_number,
+                    address_line1: userData.address_line1,
+                    address_line2: userData.address_line2,
+                    city: userData.city,
+                    state: userData.state,
+                    zip_code: userData.zip_code
+                };
                 localStorage.setItem('user', JSON.stringify(updatedUser));
             }
             
             setState(prev => ({
                 ...prev,
                 loading: false,
-                success: 'User information updated successfully'
+                success: 'Profile updated successfully'
             }));
         } catch (error) {
-            console.error('Error updating user info');
+            console.error('Error updating user info:', error);
             setState(prev => ({
                 ...prev,
                 loading: false,
@@ -178,13 +220,24 @@ const ProviderProfile = () => { const navigate = useNavigate();
 
     const handlePasswordSubmit = async (e) => {
         e.preventDefault();
-        setState(prev => ({ ...prev, loading: true, error: '' }));
+        setState(prev => ({ ...prev, loading: true, error: '', success: '' }));
         
+        // Client-side validation
         if (state.new_password !== state.confirm_password) {
             setState(prev => ({
                 ...prev,
                 loading: false,
                 error: 'New passwords do not match'
+            }));
+            return;
+        }
+        
+        // Password strength validation
+        if (state.new_password.length < 8) {
+            setState(prev => ({
+                ...prev,
+                loading: false,
+                error: 'Password must be at least 8 characters long'
             }));
             return;
         }
@@ -199,6 +252,7 @@ const ProviderProfile = () => { const navigate = useNavigate();
             // Update token in localStorage
             if (response.data && response.data.token) {
                 localStorage.setItem('token', response.data.token);
+                console.log('Password updated successfully, new token saved');
             }
             
             setState(prev => ({
@@ -210,23 +264,20 @@ const ProviderProfile = () => { const navigate = useNavigate();
                 success: 'Password updated successfully'
             }));
         } catch (error) {
-            console.error('Error updating password');
+            console.error('Error updating password:', error);
+            
+            // Extract the specific error message from the API response
+            const errorMessage = error.response?.data?.error || 'Failed to update password';
+            
             setState(prev => ({
                 ...prev,
                 loading: false,
-                error: error.response?.data?.error || 'Failed to update password'
+                error: errorMessage
             }));
         }
     };
 
-    const toggleEditMode = () => {
-        setState(prev => ({ 
-            ...prev, 
-            editMode: !prev.editMode 
-        }));
-    };
-
-    if (state.loading && !state.editMode) {
+    if (state.loading) {
         return (
             <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
                 <CircularProgress />
@@ -241,15 +292,6 @@ const ProviderProfile = () => { const navigate = useNavigate();
                     <Typography variant="h4">
                         Account Settings
                     </Typography>
-                    {state.exists && !state.editMode && (
-                        <Button 
-                            variant="outlined" 
-                            color="primary"
-                            onClick={toggleEditMode}
-                        >
-                            Edit Business Profile
-                        </Button>
-                    )}
                 </Box>
                 { state.error && (
                     <Alert severity="error" sx={{ mb: 2 }}>
@@ -263,26 +305,24 @@ const ProviderProfile = () => { const navigate = useNavigate();
                     </Alert>
                 )}
 
-                <Tabs 
-                    value={state.activeTab} 
-                    onChange={handleTabChange}
-                    sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
-                >
-                    <Tab label="Business Profile" />
-                    <Tab label="Personal Information" />
-                    <Tab label="Password" />
-                </Tabs>
-                { /* Business Profile Tab */ }
-                { state.activeTab === 0 && (
-                    state.editMode || !state.exists ? (
-                        // Edit mode or profile doesn't exist
-                        <form onSubmit={handleBusinessSubmit }>
+                {/* Combined Profile Section */}
+                <Box mb={5}>
+                    <Typography variant="h5" sx={{ mb: 2, pb: 1, borderBottom: '1px solid #e0e0e0' }}>
+                        Profile Information
+                    </Typography>
+                    <form onSubmit={handleUserInfoSubmit}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {/* Business Information */}
+                            <Typography variant="subtitle1" sx={{ mt: 1 }}>
+                                Business Information
+                            </Typography>
+                            
                             <TextField
                                 fullWidth
                                 label="Business Name"
                                 name="business_name"
-                                value={ state.business_name }
-                                onChange={ handleChange }
+                                value={state.business_name || ''}
+                                onChange={handleChange}
                                 margin="normal"
                                 required
                             />
@@ -291,78 +331,19 @@ const ProviderProfile = () => { const navigate = useNavigate();
                                 fullWidth
                                 label="Business Description"
                                 name="business_description"
-                                value={ state.business_description }
-                                onChange={ handleChange }
+                                value={state.business_description || ''}
+                                onChange={handleChange}
                                 margin="normal"
                                 multiline
-                                rows={ 4 }
+                                rows={4}
                                 required
                             />
                             
-                            <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
-                                <Button
-                                    type="submit"
-                                    variant="contained"
-                                    color="primary"
-                                    disabled={ state.loading }
-                                >
-                                    { state.loading ? <CircularProgress size={24 } /> : 
-                                        state.exists ? 'Update Business Profile' : 'Create Business Profile'}
-                                </Button>
-                                { state.exists && (
-                                    <Button
-                                        variant="outlined"
-                                        onClick={toggleEditMode }
-                                        disabled={ state.loading }
-                                    >
-                                        Cancel
-                                    </Button>
-                                )}
-                            </Box>
-                        </form>
-                    ) : (
-                        // View mode
-                        <Card variant="outlined">
-                            <CardContent>
-                                <Typography variant="h6" gutterBottom>
-                                    Business Name
-                                </Typography>
-                                <Typography variant="body1" paragraph>
-                                    {state.business_name}
-                                </Typography>
-                                <Divider sx={{ my: 2 }} />
-                                
-                                <Typography variant="h6" gutterBottom>
-                                    Business Description
-                                </Typography>
-                                <Typography variant="body1" paragraph>
-                                    {state.business_description}
-                                </Typography>
-                                <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
-                                    <Button 
-                                        variant="contained" 
-                                        color="primary"
-                                        onClick={() => navigate('/provider/services/create')}
-                                    >
-                                        Create Service
-                                    </Button>
-                                    <Button 
-                                        variant="outlined" 
-                                        color="primary"
-                                        onClick={toggleEditMode}
-                                    >
-                                        Edit Business Profile
-                                    </Button>
-                                </Box>
-                            </CardContent>
-                        </Card>
-                    )
-                )}
-
-                { /* Personal Information Tab */ }
-                { state.activeTab === 1 && (
-                    <form onSubmit={handleUserInfoSubmit}>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {/* Personal Information */}
+                            <Typography variant="subtitle1" sx={{ mt: 2 }}>
+                                Personal Information
+                            </Typography>
+                            
                             <TextField
                                 fullWidth
                                 label="Email"
@@ -383,16 +364,64 @@ const ProviderProfile = () => { const navigate = useNavigate();
                                 margin="normal"
                             />
                             
+                            <Typography variant="subtitle1" sx={{ mt: 1 }}>
+                                Address
+                            </Typography>
+                            
                             <TextField
                                 fullWidth
-                                label="Address"
-                                name="address"
-                                value={state.address || ''}
+                                label="Street Address"
+                                name="address_line1"
+                                value={state.address_line1 || ''}
                                 onChange={handleChange}
                                 margin="normal"
-                                multiline
-                                rows={3}
+                                required
                             />
+                            
+                            <TextField
+                                fullWidth
+                                label="Apt, Suite, etc. (optional)"
+                                name="address_line2"
+                                value={state.address_line2 || ''}
+                                onChange={handleChange}
+                                margin="normal"
+                            />
+                            
+                            <Grid container spacing={2}>
+                                <Grid item xs={12} sm={5}>
+                                    <TextField
+                                        fullWidth
+                                        label="City"
+                                        name="city"
+                                        value={state.city || ''}
+                                        onChange={handleChange}
+                                        margin="normal"
+                                        required
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={3}>
+                                    <TextField
+                                        fullWidth
+                                        label="State"
+                                        name="state"
+                                        value={state.state || ''}
+                                        onChange={handleChange}
+                                        margin="normal"
+                                        required
+                                    />
+                                </Grid>
+                                <Grid item xs={12} sm={4}>
+                                    <TextField
+                                        fullWidth
+                                        label="Zip Code"
+                                        name="zip_code"
+                                        value={state.zip_code || ''}
+                                        onChange={handleChange}
+                                        margin="normal"
+                                        required
+                                    />
+                                </Grid>
+                            </Grid>
                             
                             <Box sx={{ mt: 2 }}>
                                 <Button
@@ -401,15 +430,18 @@ const ProviderProfile = () => { const navigate = useNavigate();
                                     color="primary"
                                     disabled={state.loading}
                                 >
-                                    {state.loading ? <CircularProgress size={24} /> : 'Update Personal Information'}
+                                    {state.loading ? <CircularProgress size={24} /> : 'Update Profile'}
                                 </Button>
                             </Box>
                         </Box>
                     </form>
-                )}
+                </Box>
 
-                { /* Password Tab */ }
-                { state.activeTab === 2 && (
+                {/* Password Section */}
+                <Box>
+                    <Typography variant="h5" sx={{ mb: 2, pb: 1, borderBottom: '1px solid #e0e0e0' }}>
+                        Change Password
+                    </Typography>
                     <form onSubmit={handlePasswordSubmit}>
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                             <TextField
@@ -432,6 +464,7 @@ const ProviderProfile = () => { const navigate = useNavigate();
                                 onChange={handleChange}
                                 margin="normal"
                                 required
+                                helperText="Password must be at least 8 characters long and include letters and numbers"
                             />
                             
                             <TextField
@@ -443,6 +476,8 @@ const ProviderProfile = () => { const navigate = useNavigate();
                                 onChange={handleChange}
                                 margin="normal"
                                 required
+                                error={state.new_password !== state.confirm_password && state.confirm_password}
+                                helperText={state.new_password !== state.confirm_password && state.confirm_password ? 'Passwords do not match' : ''}
                             />
                             
                             <Box sx={{ mt: 2 }}>
@@ -457,7 +492,7 @@ const ProviderProfile = () => { const navigate = useNavigate();
                             </Box>
                         </Box>
                     </form>
-                )}
+                </Box>
             </Paper>
         </Box>
     );

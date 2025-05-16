@@ -130,6 +130,9 @@ export const providers = {
     getProfile: () =>
         api.get('/provider/profile/'),
     
+    updateProfile: (profileData) =>
+        api.put('/provider/profile/', profileData),
+    
     updateUserInfo: (userData) =>
         api.put('/auth/profile/', userData),
     

@@ -7,14 +7,22 @@ import {
     Button,
     CircularProgress,
     Chip,
+    Dialog,
+    DialogTitle,
+    DialogContent,
 } from '@mui/material';
 import { appointments } from '../../services/api';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 const AppointmentList = () => {
     const [appointmentList, setAppointmentList] = useState([]);
     const [loading, setLoading] = useState(true);
     const [userType, setUserType] = useState(null);
     const [isInitialized, setIsInitialized] = useState(false);
+    // Status update state
+    const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+    const [statusInProgress, setStatusInProgress] = useState(false);
+    const [updatedStatus, setUpdatedStatus] = useState('');
 
     const fetchAppointments = useCallback(async () => {
         if (!isInitialized) return;
@@ -54,10 +62,29 @@ const AppointmentList = () => {
 
     const handleStatusUpdate = async (appointmentId, newStatus) => {
         try {
+            setStatusInProgress(true);
+            setUpdatedStatus(newStatus);
+            
+            // Update the status through the API
             await appointments.updateStatus(appointmentId, newStatus);
-            fetchAppointments(); // Refresh the list
+            
+            // Show confirmation dialog
+            setStatusDialogOpen(true);
+            
+            // First refresh the list in the background
+            await fetchAppointments();
+            
+            // Auto-close after 2 seconds and ensure list is refreshed
+            setTimeout(async () => {
+                setStatusDialogOpen(false);
+                setStatusInProgress(false);
+                
+                // Refresh the list again after modal closes to ensure latest state
+                await fetchAppointments();
+            }, 2000);
         } catch (err) {
             console.error('Error updating appointment status:', err);
+            setStatusInProgress(false);
         }
     };
 
@@ -162,6 +189,33 @@ const AppointmentList = () => {
                     </Card>
                 ))}
             </Box>
+
+            {/* Status Update Confirmation Dialog */}
+            <Dialog
+                open={statusDialogOpen}
+                onClose={() => !statusInProgress && setStatusDialogOpen(false)}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>
+                    Appointment Status Updated
+                </DialogTitle>
+                <DialogContent sx={{ pl: 4, pr: 2 }}>
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                        <CheckCircleIcon color="success" sx={{ fontSize: '3rem', mb: 2 }} />
+                        <Typography variant="h6" gutterBottom>
+                            {updatedStatus === 'confirmed' 
+                                ? "The appointment has been confirmed successfully!" 
+                                : updatedStatus === 'cancelled'
+                                ? "The appointment has been cancelled successfully!"
+                                : updatedStatus === 'completed'
+                                ? "The appointment has been marked as completed!"
+                                : "The appointment status has been updated successfully!"}
+                        </Typography>
+                    </Box>
+                </DialogContent>
+                {/* No buttons in the confirmation dialog as per requirement */}
+            </Dialog>
         </Box>
     );
 };
