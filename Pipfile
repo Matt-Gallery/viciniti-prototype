@@ -10,6 +10,7 @@ psycopg2-binary = "*"
 djangorestframework = "*"
 bleach = "*"
 geopy = "*"
+leaflet = "*"
 
 [dev-packages]
 
